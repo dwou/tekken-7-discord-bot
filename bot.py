@@ -237,7 +237,6 @@ async def pretty_print_message(
   pretty_text: str = raw_text
   # iterate through each "<...>""  in the message, resolve, and replace
   # TODO: correctly resolve all these (or all) cases
-  # TODO: add switch on whether to fetch
   for prefix,digits in re.findall(r'<(@|@&|#)(\d{1,20})>', raw_text):
     raw_match = f'<{prefix}{digits}>'
     Type = {'@': 'user', '@&': 'role', '#': 'channel'}[prefix]
