@@ -49,22 +49,19 @@ class PlayerManager():
 
     # Unpack the players
     for p in json_data['players']:
-      debug_print('Reading (players):', p)
+      debug_print('Reading player:', p)
       ID = p['ID']
-      debug_print(f'{ID=}')
-      # deserialize the record
-      record = dict()
-      for r in p['record']:
+      # Deserialize the records
+      records = dict()
+      for r in p['records']:
+        # Move the region and platform from values to keys
         region = r['region']
         platform = r['platform']
         del r['region'], r['platform']
         r['elo'] += elo_offset
-        record[(region, platform)] = r # make sure it copies
-      del p['record']
-      new_player = Player(**p, record=record)
-      #for pair in new_player.record:
-      #   new_player.record[pair]["elo"] += elo_offset
-      cls.players[ID] = new_player
+        records[(region, platform)] = r # TODO: make sure it copies
+      del p['records'] # use the created record, not the loaded one
+      cls.players[ID] = Player(**p, records=records)
 
     # Unpack the ID_map
     for im in json_data['ID_map']:
@@ -127,7 +124,7 @@ class PlayerManager():
       "default_elo": cls.default_elo,
       "players": [player._serialize() for player in cls.players.values()],
     }
-    debug_print(data, type(data))
+    #debug_print(data, type(data))
     return data
 
   @classmethod
@@ -152,10 +149,10 @@ class PlayerManager():
 
     # Save data to file, if there is data
     data = cls._serialize()
-    debug_print(data)
+    #debug_print(data)
     if data: # unnecessary check?
       with open(file_path, 'w') as f:
-        debug_print('Dumping:', data)
+        #debug_print('Dumping:', data)
         json.dump(data, f, indent=2)
     else:
       debug_print("There isn't enough data to write.")
@@ -192,21 +189,21 @@ class PlayerManager():
 
 
 class Player():
-  # Values saved = banned: bool, ID: str, record: dict
-  # self.record: map[tuple,dict] =
+  # Values saved = banned: bool, ID: str, records: dict
+  # self.records: map[tuple,dict] =
   #   ('NA','PC'): ("matches_total":int, "elo":float), ...
-  def __init__(self, ID, record=dict(), banned=False, display_name=""):
+  def __init__(self, ID, records=dict(), banned=False, display_name=""):
     self.ID = ID
-    self.record = record
+    self.records = records
     self.banned = banned
     self.display_name = display_name
 
   def get_record(self, region, platform) -> dict:
     """ Return record, create one if it doesn't exist """
     couple = (region, platform)
-    if couple not in self.record:
-      self.record[couple] = {"matches_total": 0, "elo": DEFAULT_ELO}
-    return self.record[couple]
+    if couple not in self.records:
+      self.records[couple] = {"matches_total": 0, "elo": DEFAULT_ELO}
+    return self.records[couple]
 
   def get_elo(self, region, platform) -> float:
     return self.get_record(region, platform)['elo']
@@ -216,7 +213,7 @@ class Player():
     # tuple cannot be used as a key in json;
     #   move each (region,platform) into the values
     serialized_records = []
-    for (region, platform),value in self.record.items():
+    for (region, platform),value in self.records.items():
       this_record = value
       this_record["region"] = region
       this_record["platform"] = platform
@@ -225,7 +222,7 @@ class Player():
     data = {
       "display_name": self.display_name,
       "ID": self.ID,
-      "record": serialized_records,
+      "records": serialized_records,
       "banned": self.banned,
     }
     debug_print("Serialized player data:", data)
@@ -235,7 +232,7 @@ class Player():
     """ returns the string to be printed """
     output = f"{self.display_name} has the following records:\n"
     any_found = False
-    for (region,platform),record in self.record.items():
+    for (region,platform),record in self.records.items():
       if record['matches_total']:
         # TODO: sort
         output += (f"{region}-{platform}: {int(record['elo'])} elo from {record['matches_total']} matches\n")
