@@ -10,6 +10,9 @@
 #  A customized ping system based on region/platform/Elo
 #  API rate limiter (but shouldn't be a problem)
 
+# TODO: "/lobby [query|list|close]"
+# Should 1) the lobby creator invite the other or 2) the other asks to join?
+
 from os import getenv
 import re
 from typing import Literal
@@ -49,19 +52,14 @@ discord.member.Member
   .send                    # send a message; different from channel.send()?
 '''
 
-# Name Rules: (unnecessary?)
-#  case insensitive, forced lowercase
-#  Rules: 2-32 length; _ . a-z 0-9 allowed; unique; no consecutive ".."
-#  >>> valid_name_pattern = r'(?!.*?\.\.)([a-z0-9_\.]{2,32})'
-
 
 def get_player(user: discord.member.Member) -> Player:
   """ Use this to interface with PlayerManager players, as it can update
       the Player's display name """
   player: Player = PlayerManager.get_player(user.id)
-  # Resolve and cache display name if it's not defined
+  # Resolve and save display name if it's not defined
   if not player.display_name:
-    player.display_name = user.global_name #display_name
+    player.display_name = user.global_name
   return player
 
 
@@ -100,14 +98,12 @@ async def on_message(msg: discord.message.Message) -> None:
   if not msg.guild:
     return
 
-  #text: str = msg.content
-  is_bot: bool = msg.author.bot
-  #is_admin: bool = msg.author.guild_permissions.administrator
-
-  # Print message and resolve mentioned users/roles/channels
-  await pretty_print_message(msg, to_resolve=True)
+  # Print message
+  formatted_msg: str = await format_message(msg, Format="%t [%d]: %f")
+  debug_print(formatted_msg)
 
   # Ignore bots' messages
+  is_bot: bool = msg.author.bot
   if is_bot:
     return
 
@@ -180,7 +176,7 @@ async def help(
 async def ranked(
     itx: discord.Interaction,
     region: Literal['NA','EU','Asia'],
-    platform: Literal['Steam', 'PS'],
+    platform: Literal['Steam', 'PS'], # use "Steam", as "PS" ~= "PC" visually
   ) -> None:
   if platform == 'Steam':
     platform = 'PC'
@@ -217,21 +213,20 @@ async def ping(ctx: discord.ext.commands.context.Context) -> None:
 ###################
 
 
-async def pretty_print_message(
+async def format_message(
     msg: discord.message.Message,
-    to_resolve: bool = False
+    Format: str = "[%T %d]: %f", # see `format_map`
+    to_resolve: bool = True,
   ) -> None:
-  """ Print the message and resolve mentioned users/roles """
+  """ Format the message and resolve mentioned users/roles/etc. """
+  # Iterate through each "<...>"  in the message, resolve, and replace
   raw_text: str = msg.content
-  is_bot: bool = msg.author.bot
-  is_admin: bool = msg.author.guild_permissions.administrator
   pretty_text: str = raw_text
-  # iterate through each "<...>""  in the message, resolve, and replace
-  # TODO: correctly resolve all these (or all) cases
   for prefix,digits in re.findall(r'<(@|@&|#)(\d{1,20})>', raw_text):
     raw_match = f'<{prefix}{digits}>'
     Type = {'@': 'user', '@&': 'role', '#': 'channel'}[prefix]
     match Type:
+      # TODO: resolve all cases
       case 'role':
         pretty_fragment = '@[a role]'
       case 'user':
@@ -244,10 +239,30 @@ async def pretty_print_message(
         pretty_fragment = '#[a channel]'
       case _:  # no match
         debug_print(f"Unknown match: {raw_match}")
-        continue
+        pretty_fragment = "[???]"
     pretty_text = pretty_text.replace(raw_match, pretty_fragment)
+
+  # Prepare formatting the message
+  is_bot: bool = msg.author.bot
+  is_admin: bool = msg.author.guild_permissions.administrator
   title = 'bot' if is_bot else ('admin' if is_admin else 'user')
-  debug_print(f'[{title} {msg.author.display_name}]: {pretty_text}')
+  format_map = {
+    "%n": msg.author.name,
+    "%g": msg.author.global_name,
+    "%d": msg.author.display_name,
+    "%c": msg.channel.name,
+    "%r": msg.content, # unformatted (raw) content
+    "%f": pretty_text,# if content else msg.content, # formatted (given) content
+    "%T": title, # full title "bot"|"admin"|"user"
+    "%t": title[0], # first letter of `title`
+  }
+
+  # Apply the format; substitute in-place
+  output = Format
+  for key,value in format_map.items():
+    output = re.sub(f"({key})", str(value), output)
+
+  return output
 
 
 async def handle_autoreply(msg: discord.message.Message) -> bool:
