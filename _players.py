@@ -228,9 +228,10 @@ class Player():
     debug_print("Serialized player data:", data)
     return data
 
-  def pretty_print(self) -> None:
-    """ returns the string to be printed """
-    output = f"{self.display_name} has the following records:\n"
+  def get_summary(self) -> None:
+    """ Returns a string summary of this Player """
+    chart = "\U0001f4ca"
+    output = f"{chart} {self.display_name} has the following records:\n"
     any_found = False
     for (region,platform),record in self.records.items():
       if record['matches_total']:
