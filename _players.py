@@ -2,81 +2,248 @@ import os
 import re
 import json
 import time
-from basic_functions import *
+from basic_functions import debug_print
 
+# in case it has to be adjusted; functionality incomplete
+DEFAULT_ELO: float = 1000.0
 
-class Players():
-  def __init__(self, filename='players.json'):
-    self.filename=filename
-    self.players: dict[str, Player] = self.load_players() # ID -> player
+class PlayerManager():
+  filename: str = None
+  players: dict[str, Player] = dict()
+  ID_map: dict[str, str] = dict() # curr -> prev
+  default_elo: float = None
+  # identifier (1..) -> {"region":_, "platform":_,
+  #   "start_time":_, "last_interaction":_, "players":{}}
+  lobbies: dict[int, dict] = dict()
 
-  def load_players(self):
-    """ returns players from file, or create a new players """
-    debug_print('Loading players...')
+  @classmethod
+  def initialize(cls, filename='players.json'):
+    cls.filename = filename
+    #cls.players = cls._load_players() # ID -> player
+    cls._load_data(filename=filename)
+
+  @classmethod
+  def _load_data(cls, filename=None) -> None:
+    """ Loads players,ID_map from a file, or create a new file and vars.
+        Adjust important elo based on DEFAULT_ELO.
+        Assume all input data is valid. """
+    ## Load the file if it exists
+    if filename is None:
+      filename = cls.filename
     this_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(this_dir, self.filename)
-    debug_print(this_dir, file_path)
-    players = dict()
-    if os.path.isfile(file_path):
-      debug_print('File exists.')
-      with open(file_path, "r") as f:
-        # TODO: check type annotation
-        data: list[dict[str,_]] = json.load(f)
-      for line in data:
-        debug_print('Reading:', line)
-        ID = line['ID']
-        debug_print(f'{ID=}')
-        new_player = Player(self, **line)
-        players[ID] = new_player
-    return players
+    file_path = os.path.join(this_dir, filename)
+    if not os.path.isfile(file_path):
+      debug_print("No input file found.")
+      cls.default_elo = DEFAULT_ELO
+      # use default (empty) values for the other variables
+      return
+    with open(file_path, "r") as f:
+      debug_print('Loading data...')
+      json_data = json.load(f)
+      debug_print(f"Loaded data: {json_data}")
 
-  def print_players(self):
-    for player in self.players.values():
+    ## Unpack the loaded data
+    cls.default_elo = json_data['default_elo']
+    elo_offset = 0 if DEFAULT_ELO == cls.default_elo \
+                 else DEFAULT_ELO - cls.default_elo
+
+    # Unpack the players
+    for p in json_data['players']:
+      debug_print('Reading (players):', p)
+      ID = p['ID']
+      debug_print(f'{ID=}')
+      # deserialize the record
+      record = dict()
+      for r in p['record']:
+        region = r['region']
+        platform = r['platform']
+        del r['region'], r['platform']
+        r['elo'] += elo_offset
+        record[(region, platform)] = r # make sure it copies
+      del p['record']
+      new_player = Player(**p, record=record)
+      #for pair in new_player.record:
+      #   new_player.record[pair]["elo"] += elo_offset
+      cls.players[ID] = new_player
+
+    # Unpack the ID_map
+    for im in json_data['ID_map']:
+      debug_print('Reading (IDs):', im)
+      ref_ID = im['ref_ID']
+      orig_ID = im['orig_ID']
+      debug_print(f'{ref_ID} -> {orig_ID}')
+      cls.ID_map[ref_ID] = orig_ID
+
+    cls.default_elo = DEFAULT_ELO # after adjusting loaded values
+
+  @classmethod
+  def print_players(cls) -> None:
+    for player in cls.players.values():
       debug_print(vars(player))
 
-  def get_player(self, ID) -> Player:
-    """ fetch a player by their ID; create them if they don't exist """
-    if ID not in self.players:
-      self.players[ID] = Player(self)
-    return self.players[ID]
+  @classmethod
+  def get_player(cls, ID: str) -> Player:
+    """ Fetch a player by their ID; Create them if they don't exist;
+        Resolve their ID if it's mapped. Error on a circular pointer chain """
+    checked_IDs = set()
+    while ID in cls.ID_map:
+      if ID in checked_IDs:
+        raise "get_player circular pointer error"
+      checked_IDs.add(ID)
+      ID = cls.ID_map[ID]
+    if ID not in cls.players:
+      debug_print(f"Making a new player with {ID=}")
+      cls.players[ID] = Player(ID)
+    return cls.players[ID]
 
-  def save_to_file(self, backup=False):
-    if not self.players:
-      debug_print('There\'s nothing to save')
+  @classmethod
+  def load_backup(cls) -> Player:
+    """ Load the latest <filename>-<timestamp>.json from this directory
+        if any exist """
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    latest_time: int = 0
+    # Scan the directory
+    for filename in os.listdir(this_dir):
+      if match := re.match(fr'{cls.filename}-(\d+).json', filename):
+        Time = int(match.group(1))
+        if Time > latest_time:
+          latest_time = Time
+    if latest_time > 0:
+      file_to_load = f'{cls.filename}-{latest_time}.json'
+      #cls.players = cls._load_players(filename=file_to_load)
+      cls._load_data(filename=file_to_load)
+      debug_print(f"Backup '{file_to_load}' loaded.")
+    else:
+      debug_print('There is no backup to load.')
+
+  @classmethod
+  def _serialize(cls) -> Dict:
+    """ Create serialized representation of this object, for json """
+    epoch_time = int(time.strftime("%s"))
+    readable_time = time.strftime("%Y-%m-%d at %T %Z")
+    data = {
+      "timestamp": [epoch_time, readable_time],
+      "ID_map": cls.ID_map,
+      "default_elo": cls.default_elo,
+      "players": [player._serialize() for player in cls.players.values()],
+    }
+    debug_print(data, type(data))
+    return data
+
+  @classmethod
+  def save_to_file(cls, backup=False) -> None:
+    # Do nothing if there's no data to save
+    if not cls.players:
+      debug_print("There's nothing to save")
       return
     this_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(this_dir, self.filename)
+    file_path = os.path.join(this_dir, cls.filename)
+
+    # Back up (rename instead of overwrite) the old data if applicable
     if backup:
-      # rename the current <self.filename>.json to <self.filename>-<timestamp>.json
-      old_basename = self.filename[:-5] # strip ".json"
+      # rename the current <filename>.json to <filename>-<timestamp>.json
+      old_basename = cls.filename[:-5] # strip ".json"
       unix_time = time.strftime("%s")
       backup_name = os.path.join(this_dir, f'{old_basename}-{unix_time}.json')
       if os.path.isfile(file_path):
         os.rename(file_path, backup_name)
       else:
-        debug_print('There\'s nothing to back up.')
-    lines: list[dict] = [] # TODO: check type
-    for ID,player in self.players.items():
-      keys_to_write = list(vars(player).keys())
-      debug_print(f'writing {ID=} with keys {keys_to_write}')
-      if keys_to_write and keys_to_write != ['parent']:
-        to_add = {key:value
-                  for key,value in vars(player).items()
-                  if key != 'parent'}
-        lines.append(to_add)
-    if lines:
+        debug_print("There's nothing to back up.")
+
+    # Save data to file, if there is data
+    data = cls._serialize()
+    debug_print(data)
+    if data: # unnecessary check?
       with open(file_path, 'w') as f:
-        debug_print('Dumping:', lines)
-        json.dump(lines, f)
+        debug_print('Dumping:', data)
+        json.dump(data, f, indent=2)
     else:
       debug_print("There isn't enough data to write.")
 
-  def new_player(self, ID: str):
-    self.players[ID] = Player(self, ID=ID)
+  @classmethod
+  def new_lobby(cls, player: Player, region: str, platform: str) -> int:
+    """ Create lobby if player not already in a lobby;
+        return None if player is in a lobby on this platform
+        else return lobby identifier """
+    # Check if they're already in a lobby
+    for identifier,lobby in cls.lobbies.items():
+      if player in lobby["players"] and lobby["platform"] == platform:
+        debug_print(f"Player {player.ID=} already has a lobby on this platform.")
+        return None
+    # make sure they have a record with this region+platform
+    player.get_record(region, platform)
+    for i in range(1,1000):
+      if i not in cls.lobbies:
+        now = time.time()
+        cls.lobbies[i] = {
+          "start_time": now,
+          "last_interaction": now,
+          "region": region,
+          "platform": platform,
+          "players": {player,}
+        }
+        return i
+
+  @classmethod
+  def remap_ID(cls, curr_ID: str, prev_ID: str) -> None:
+    """ Remap one Discord ID to another (in case they lose their account etc).
+        Should be restricted to admin-only. """
+    cls.ID_map[curr_ID] = prev_ID
 
 
 class Player():
-  def __init__(self, parent, **kwargs):
-    self.parent = parent
-    for key,value in kwargs.items():
-      setattr(self, key, value)
+  # Values saved = banned: bool, ID: str, record: dict
+  # self.record: map[tuple,dict] =
+  #   ('NA','PC'): ("matches_total":int, "elo":float), ...
+  def __init__(self, ID, record=dict(), banned=False, display_name=""):
+    self.ID = ID
+    self.record = record
+    self.banned = banned
+    self.display_name = display_name
+
+  def get_record(self, region, platform) -> dict:
+    """ Return record, create one if it doesn't exist """
+    couple = (region, platform)
+    if couple not in self.record:
+      self.record[couple] = {"matches_total": 0, "elo": DEFAULT_ELO}
+    return self.record[couple]
+
+  def get_elo(self, region, platform) -> float:
+    return self.get_record(region, platform)['elo']
+
+  def _serialize(self) -> Dict:
+    """ Create serialized representation of this object, for json """
+    # tuple cannot be used as a key in json;
+    #   move each (region,platform) into the values
+    serialized_records = []
+    for (region, platform),value in self.record.items():
+      this_record = value
+      this_record["region"] = region
+      this_record["platform"] = platform
+      serialized_records.append(this_record)
+
+    data = {
+      "display_name": self.display_name,
+      "ID": self.ID,
+      "record": serialized_records,
+      "banned": self.banned,
+    }
+    debug_print("Serialized player data:", data)
+    return data
+
+  def pretty_print(self) -> None:
+    """ returns the string to be printed """
+    output = f"{self.display_name} has the following records:\n"
+    any_found = False
+    for (region,platform),record in self.record.items():
+      if record['matches_total']:
+        # TODO: sort
+        output += (f"{region}-{platform}: {int(record['elo'])} elo from {record['matches_total']} matches\n")
+        any_found = True
+    if not any_found:
+      output += "None, they're new!\n"
+    if self.banned:
+      output += "and they're BANNED\n"
+    output = output.strip()
+    return output
+
