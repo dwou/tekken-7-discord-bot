@@ -149,7 +149,7 @@ async def playerdata(
       response = f"{type(e)}: {e.args}"
     else:
       player = get_player(mention_user)
-      response = player.pretty_print()
+      response = player.get_summary()
   else:
     response = "Invalid syntax: " + user_at
   await itx.response.send_message(response, ephemeral=True)
@@ -171,7 +171,7 @@ async def help(
       to_print = "[admin-only] Manually save the PlayerManager data."
     case '!ping':
       to_print = "A simple ping-pong test to see if the bot is online."
-    case _:
+    case _: # This branch should be unreachable
       to_print = "Command not found."
   await itx.response.send_message(to_print, ephemeral=True)
 
@@ -193,9 +193,10 @@ async def ranked(
       ephemeral=True
     )
     return
+  alert = "\U0001f6a8"
   await itx.response.send_message(
-    f"<@{discord_account_ID}> just opened a ranked lobby!\n"
-      + this_player.pretty_print(),
+    f"{alert} <@{discord_account_ID}> just opened a ranked lobby {alert} _don't forget to ping the role to notify people_\n\n"
+      + this_player.get_summary(),
     ephemeral=False
   )
 
