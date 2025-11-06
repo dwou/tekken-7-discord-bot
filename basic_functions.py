@@ -1,6 +1,3 @@
-#import discord
-#from discord.ext import commands
-#from discord import app_commands
 
 
 def debug_print(*args, **kwargs):
@@ -8,3 +5,19 @@ def debug_print(*args, **kwargs):
   sep = kwargs.get('sep', ' ')
   end = kwargs.get('end', '\n')
   print(*args, sep=sep, end=end, flush=True)
+
+
+def create_elo_function(
+    K: float = 25, # The elo swing of a fair match
+    diff: float = 400,  # "A player with +`diff` Elo..."
+    xtimes: float = 10, # "... is `xtimes` times more likely to win"
+  ):
+  """ Creates and returns a personalized Elo calculation function """
+  def elo_function(p1, p2: float, p1_wins: float) -> dict[str, float]:
+    # p1_wins: 0 = loss, 1 = win, 0.5 = Draw
+    p1_expected: float = 1 / (1 + xtimes ** ((p2 - p1) / diff))
+    p2_expected: float = 1 / (1 + xtimes ** ((p1 - p2) / diff))
+    p1_gain = K * (p1_wins - p1_expected)
+    p2_gain = K * ((1 - p1_wins) - p2_expected)
+    return {"p1_gain": p1_gain, "p2_gain": p2_gain}
+  return elo_function
