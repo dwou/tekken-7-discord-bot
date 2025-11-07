@@ -19,7 +19,6 @@ class PlayerManager():
   @classmethod
   def initialize(cls, filename='players.json'):
     cls.filename = filename
-    #cls.players = cls._load_players() # ID -> player
     cls._load_data(filename=filename)
 
   @classmethod
@@ -27,7 +26,7 @@ class PlayerManager():
     """ Load players,ID_map from a file, or create a new file and vars.
         Adjust important elo based on DEFAULT_ELO.
         Assume all input data is valid. """
-    ## Load the file if it exists
+    # Load the file if it exists
     if filename is None:
       filename = cls.filename
     this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,7 +41,7 @@ class PlayerManager():
       json_data = json.load(f)
       debug_print(f"Loaded data: {json_data}")
 
-    ## Unpack the loaded data
+    # Unpack the loaded data
     cls.default_elo = json_data['default_elo']
     elo_offset = 0 if DEFAULT_ELO == cls.default_elo \
                  else DEFAULT_ELO - cls.default_elo
