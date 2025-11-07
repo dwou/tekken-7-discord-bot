@@ -1,5 +1,4 @@
 
-
 def debug_print(*args, **kwargs):
   """ print to console with flush=True """
   sep = kwargs.get('sep', ' ')
@@ -21,3 +20,16 @@ def create_elo_function(
     p2_gain = K * ((1 - p1_wins) - p2_expected)
     return {"p1_gain": p1_gain, "p2_gain": p2_gain}
   return elo_function
+
+
+def async_cache(func):
+  """ Cache the result of an async function. """
+  cache = {}
+  async def wrapper(arg):
+    if arg in cache:
+      return cache[arg]
+    result = await func(arg)
+    cache[arg] = result
+    return result
+  return wrapper
+
