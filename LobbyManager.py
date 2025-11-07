@@ -10,9 +10,9 @@ class LobbyManager():
   #   "ID": int,
   #   "region":_, "platform":_,
   #   "start_time":_, "last_interaction":_,
-  #   "players":{},
+  #   "players": set[Player],
   #   "records": dict[player, dict[W/L/D -> int]]
-  #   "invited_players":{}
+  #   "invited_players": set[Player]
   keepalive_duration = 30 * 60 # seconds; initial time to keep a lobby alive for
   refresh_duration = 3 * 60 # seconds; time to keep a lobby alive without activity
 
@@ -86,13 +86,19 @@ class LobbyManager():
     raise ValueError("Player not in a lobby.")
 
   @classmethod
+  def invite_to_lobby(cls, host: Player, invitee: Player) -> None:
+    """ Mark a lobby as having had invited `invitee`. """
+    lobby = cls.find_lobby(host)
+    lobby['invited_players'].add(invitee)
+
+  @classmethod
   def join_lobby(cls, host: Player, joiner: Player) -> None:
     """ Add `player` to a host's lobby. Don't check platform or region.
         Raise ValueError if lobby is full, doesn't exist, already has `player`,
         or if the player is in another lobby.
         Raise PermissionError if the player is uninvited or banned. """
     if joiner.banned:
-      raise PermissionError("Player is banned from ranked.")
+      raise PermissionError("You're banned from ranked.")
     # Find the host's lobby
     try:
       lobby = cls.find_lobby(host)
@@ -107,10 +113,10 @@ class LobbyManager():
         raise ValueError(f"You're already in another lobby (use \"/leave\").")
     # Check if lobby is full
     if len(lobby['players']) > 1:
-      raise ValueError(f"{host.display_name}'s lobby is full (wait or make a new one).")
-    # Check if they're invited
+      raise ValueError(f"Host lobby is full (wait or make a new one).")
+    # Check if player is invited
     if joiner not in lobby['invited_players']:
-      raise PermissionError(f"Player tried joining lobby #{lobby['ID']} without having been invited.")
+      raise PermissionError(f"You haven't been invited to this lobby (the host has to /invite you).")
     # Add the player and update the lobby
     lobby['players'].add(joiner)
     lobby['records'][joiner] = {'W': 0, 'L': 0, 'D': 0}
