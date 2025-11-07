@@ -8,17 +8,15 @@
 #   Manage Roles (to ping elo ranges)
 
 # Implemented:
-#  Complete data saving(+backup) and loading system
+#  Complete data saving(+backup +autosaving) and loading system
 #  (semi-Automatic) Discord user ranked account creation
 #
 # Not (yet) implemented:
-#   Automatic backups (would be easy)
 #   A customized ping system based on region/platform/Elo (not useful for now)
 #   API rate limiter (but shouldn't be a problem)
 
 # TODO: test EVERYTHING
 # TODO: figure out how to deploy/update
-# TODO: add autosave
 # TODO: "/lobby [kick|list|query]"
 # TODO: test permissions
 # TODO: consider using /match instead of /ranked, and give the option of unranked
@@ -28,17 +26,20 @@ from os import getenv
 import re
 from typing import Literal
 from functools import cache
+import asyncio
 
 import discord
 from discord.ext import commands
 from discord import app_commands
-#from discord.ui import Button, View
 from dotenv import load_dotenv
 
 from _players import *
 from LobbyManager import *
 from basic_functions import *
 
+AUTOSAVE = True
+AUTOSAVE_BACKUPS = True # whether to back up previous data while autosaving
+AUTOSAVE_PERIOD = 30 * 60 # (seconds) autosave periodically
 
 # NOTES: Types & naming conventions, Functions, Data
 '''
@@ -74,11 +75,15 @@ intents = discord.Intents.default()
 intents.message_content = True  # see (incoming messages'?) content
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def main():
+async def main():
   global bot
   PlayerManager.initialize()
+  if AUTOSAVE:
+    asyncio.create_task(
+      PlayerManager.autosave(period=AUTOSAVE_PERIOD, backup=AUTOSAVE_BACKUPS)
+    )
   load_dotenv()
-  bot.run(getenv("DISCORD_TOKEN"))
+  await bot.start(getenv("DISCORD_TOKEN"))
 
 
 ##################
@@ -151,21 +156,10 @@ async def save(
 @bot.tree.command(name='playerdata', description='Prints player data')
 async def playerdata(
     itx: discord.Interaction,
-    at_user: str,
+    user: discord.User,
   ) -> None:
-  debug_print(at_user)
-  response = ""
-  if match := re.match(r'<@(\d+)>', at_user):
-    ID = match.group(1)
-    try:
-      mention_user = await bot.fetch_user(ID)
-    except Exception as e:
-      response = f"{type(e)}: {e.args}"
-    else:
-      player = get_player(mention_user)
-      response = player.get_summary()
-  else:
-    response = "Invalid syntax: " + at_user
+  player = get_player(user)
+  response = player.get_summary()
   await itx.response.send_message(response, ephemeral=True)
 
 
@@ -228,21 +222,21 @@ async def ranked(
       + this_player.get_summary(),
     ephemeral=False
   )
-  await itx.followup.send("_(Don't forget to /invite people)_", ephemeral=True)
+  await itx.followup.send("Don't forget to /invite people.", ephemeral=True)
 
 
 @bot.tree.command(name='invite', description='Opens a ranked session')
 async def invite(
     itx: discord.Interaction,
-    at_user: discord.User,
+    invited_user: discord.User,
   ) -> None:
   try:
     host = itx.user
-    invitee = at_user#await resolve_at_user(at_user)
     host_player = get_player(host)
-    invitee_player = get_player(invitee)
+    invitee_player = get_player(invited_user)
     LobbyManager.invite_to_lobby(host_player, invitee_player)
-    text = f"<@{host.id}> invited <@{invitee.id}> - _use /join to join their lobby_"
+    text = f"<@{host.id}> invited <@{invited_user.id}>"\
+      "\n-# use /join to join their lobby"
     await itx.response.send_message(text)
   except Exception as e:
     await itx.response.send_message(f"ERROR: {e.args}")
@@ -336,27 +330,30 @@ async def ping(ctx: discord.ext.commands.context.Context) -> None:
 
 
 def get_player(user: discord.member.Member) -> Player:
-  """ Use this to interface with PlayerManager players, as it can update
-      the Player's display name """
+  """ Resolve a Player from their Discord user.
+      Use this to interface with PlayerManager players, as it can update
+      the Player's display name. """
   user_ID = str(user.id)
   player: Player = PlayerManager._get_player(user_ID)
-  # Resolve and save display name if it's not defined
+  # Resolve and save display name
   if not player.display_name:
-    player.display_name = user.global_name
+    name = user.global_name if user.global_name else user.display_name
+    player.display_name = name
   return player
+
 
 async def resolve_at_user(at_user: str) -> discord.User:
   """ Convert at_user (="<@user_ID>") to a User. """
   if match := re.match(r'<@(\d+)>', at_user):
     ID = match.group(1)
-    user = await bot.fetch_user(ID)
+    user = await bot_fetch_user(ID)
   else:
     raise ValueError(f"Invalid syntax: `{at_user}` (did you use \"@user\" ?)")
   return user
 
 
 async def format_message(
-    msg: discord.message.Message,
+    msg: discord.message.Message, # doesn't work with Interactions :(
     Format: str = "[%T %d]: %f", # see `format_map`
     to_resolve: bool = True,
   ) -> None:
@@ -372,7 +369,7 @@ async def format_message(
         pretty_fragment = '@[a role]'
       case 'user':
         if to_resolve:
-          mention_username = (await bot.fetch_user(digits)).display_name
+          mention_username = (await bot_fetch_user(digits)).display_name
           pretty_fragment = f"@[{mention_username}]"
         else:
           pretty_fragment = '@[a user]'
@@ -407,8 +404,8 @@ async def format_message(
 
 
 async def handle_autoreply(msg: discord.message.Message) -> bool:
-  """ apply all the functions that automatically reply to a message.
-      Return True if there is any match """
+  """ Apply all the functions that automatically reply to a message.
+      Return True if there is any match. """
   text: str = msg.content
   beggar_pattern = r'(?=(.{0,40}tourn.{0,30})|(help|final|last)).{0,30}achiev'
   if re.search(beggar_pattern, text):
@@ -424,5 +421,12 @@ async def handle_autoreply(msg: discord.message.Message) -> bool:
   return True
 
 
+@async_cache
+async def bot_fetch_user(user_ID: int) -> discord.User: # supposed to be int? try using str
+  """ Fetch a user and cache the result. """
+  print("Fetching user:", user_ID)
+  user = await bot.fetch_user(user_ID)
+  return user
+
 if __name__ == "__main__":
-  main()
+  asyncio.run(main())
