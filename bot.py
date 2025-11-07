@@ -1,27 +1,29 @@
 
+# Use this invite link (it displays permissions before you accept):
+#  "https://discord.com/oauth2/authorize?client_id=1429136363151950008&permissions=2048&integration_type=0&scope=bot+applications.commands
+# Scopes: applications.commands; bot
+# Required roles (top to bottom):
+#   View Channels (maybe?)
+#   Send Messages and Create Posts
+# Needed later but not right now:
+#   Manage Roles (to ping elo ranges)
+
 # Implemented:
 #  Near-full Discord integration (idk how to deploy/update)
 #  Complete data saving(+backup) and loading system
 #  (semi-Automatic) Discord user ranked account creation
 #
 # Not (yet) implemented:
-#  Automatic backups
-#  A working lobby and Elo system
-#  A customized ping system based on region/platform/Elo
-#  API rate limiter (but shouldn't be a problem)
+#   Automatic backups
+#   A working lobby and Elo system
+#   A customized ping system based on region/platform/Elo
+#   API rate limiter (but shouldn't be a problem)
 
 # TODO: remove backup hot loading - too complicated
-# TODO: "/lobby [query|list|close]"
-# Should 1) the lobby creator invite the other or 2) the other asks to join?
-
-# Use this invite link:
-# "https://discord.com/oauth2/authorize?client_id=1429136363151950008&permissions=2048&integration_type=0&scope=bot+applications.commands
-
-# Required roles (top to bottom):
-#   View Channels (maybe?)
-#   Send Messages and Create Posts
-# Needed later but not right now:
-#   Manage Roles (to ping elo ranges)
+# TODO: "/lobby [close|kick|list|query]"
+# TODO: rewrite error messages to be in 2nd person
+# TODO: test permissions
+# TODO: consider using /match instead of /ranked, and give the option of unranked
 
 from os import getenv
 import re
@@ -38,8 +40,7 @@ from _players import *
 from LobbyManager import *
 from basic_functions import *
 
-# TODO: test permissions
-# needs '268536832' permissions (I think)
+
 
 # NOTES: Types & naming conventions, Functions, Data
 '''
@@ -70,7 +71,6 @@ def get_player(user: discord.member.Member) -> Player:
       the Player's display name """
   # TODO: add a wrapper to cache
   user_ID = str(user.id)
-  debug_print(f'Getting player with {user_ID=}')
   player: Player = PlayerManager._get_player(user_ID)
   # Resolve and save display name if it's not defined
   if not player.display_name:
@@ -127,6 +127,23 @@ async def on_message(msg: discord.message.Message) -> None:
 
   # Execute ! commands
   await bot.process_commands(msg)
+
+
+@bot.event
+async def on_interaction(itx: discord.Interaction):
+  """ Log incoming slash commands """
+  if itx.type == discord.InteractionType.application_command:
+    command = itx.data['name']
+    # check if there are arguments passed
+    if 'options' in itx.data:
+      options_text = ' '.join([
+        f"{option['name']}:{option['value']}"
+        for option in itx.data['options']
+      ])
+    else:
+      options_text = ''
+
+    debug_print(f"[{itx.user.display_name}] /{command} {options_text}")
 
 
 ##################
@@ -192,26 +209,41 @@ async def ranked(
     itx: discord.Interaction,
     region: Literal['NA', 'EU', 'Asia'],
     platform: Literal['Steam', 'PS'], # use "Steam", as "PS" ~= "PC" visually
+    ping_users: Literal['Ping users', "Don't ping users"],
   ) -> None:
   if platform == 'Steam':
     platform = 'PC'
   discord_account = itx.user
-  discord_account_ID = itx.user.id
   this_player = get_player(discord_account)
   # Try making a new lobby for this player and proceed if a new lobby is made
   try:
-    lobby_ID = await LobbyManager.new_lobby(this_player, region, platform)
-    debug_print(LobbyManager.lobbies[lobby_ID])
+    lobby = await LobbyManager.new_lobby(this_player, region, platform)
   except ValueError as e:
     debug_print(e.args)
     await itx.response.send_message(
-      "ERROR: you're already in a lobby.",
+      f"ERROR: {e.args}",
       ephemeral=True
     )
     return
   alert = "\U0001f6a8"
+  if ping_users == "Ping users":
+    role_name = f"{region}-T7-{platform}"
+    role = discord.utils.get(itx.guild.roles, name=role_name)
+    #debug_print(role)
+    #debug_print(role.id)
+    #debug_print(role.name)
+
+    role_str = f"<@&{role.id}> "
+  else:
+    role_str = ''
+
+
+  # TODO: which looks better?
+  header = f"{role_str}:speaking_head::mega: <@{discord_account.id}> just opened a ranked lobby!\n\n"
+  #header = f":rotating_light: <@{discord_account_ID}> just opened a ranked lobby :rotating_light:\n\n"
+  debug_print(header)
   await itx.response.send_message(
-    f"{alert} <@{discord_account_ID}> just opened a ranked lobby {alert} _don't forget to ping the role to notify people_\n\n"
+      header
       + this_player.get_summary(),
     ephemeral=False
   )
@@ -223,13 +255,10 @@ async def join(
     at_user: str,
   ) -> None:
   """ The caller tries to join the lobby of `at_user` """
-  #joiner_account_ID = itx.user.id
   joiner_player = get_player(itx.user)
   # Try parsing the host ID and resolving the host account
   try:
-    debug_print(f"{at_user=}")
     host_account_ID = re.match(r"<@(\d+)>", at_user).group(1)
-    debug_print(f"{host_account_ID=}")
     host_user = await bot.fetch_user(host_account_ID)
     host_player = get_player(host_user)
   except Exception as e:
@@ -239,14 +268,31 @@ async def join(
     return
   # Try finding and joining the lobby
   try:
-    print(f'{host_player=}')
-    lobby_ID = LobbyManager.find_lobby(host_player)
-    LobbyManager.join_lobby(joiner_player, lobby_ID)
+    lobby = LobbyManager.find_lobby(host_player)
+    LobbyManager.join_lobby(host_player, joiner_player)
   except Exception as e:
     await itx.response.send_message(f"ERROR: {e.args}", ephemeral=True)
     return
   debug_print("Lobby joined successfully.")
-  await itx.response.send_message(f"{joiner_player.display_name} joined {host_player.display_name} lobby.", e.args)
+  await itx.response.send_message(
+    f"{joiner_player.display_name} joined {host_player.display_name}'s lobby"
+  )
+
+
+@bot.tree.command(name='leave', description="Leave the lobby you're in")
+async def leave(
+    itx: discord.Interaction,
+  ) -> None:
+  """ The caller tries to leave their current lobby """
+  player = get_player(itx.user)
+  # Try finding and leaving the lobby
+  try:
+    LobbyManager.leave_lobby(player)
+  except Exception as e:
+    await itx.response.send_message(f"ERROR: {e.args}", ephemeral=True)
+    return
+  debug_print("Lobby exited successfully.")
+  await itx.response.send_message(f"{player.display_name} left a lobby")
 
 
 @bot.tree.command(name='result', description='Report the result of a match')
@@ -255,13 +301,12 @@ async def result(
     result: Literal['I won', 'I lost', 'Draw'],
     platform: Literal['Steam', 'PS'], # use "Steam", as "PS" ~= "PC" visually
   ) -> None:
+  """ A player reports the result of their match. """
   if platform == 'Steam':
     platform = 'PC'
   discord_account = itx.user
-  #discord_account_ID = itx.user.id
-  this_player = get_player(discord_account_ID)
-  lobby_ID = LobbyManager.find_lobby(this_player)
-  lobby = LobbyManager.lobbies[lobby_ID]
+  this_player = get_player(discord_account)
+  lobby = LobbyManager.find_lobby(this_player)
   # Fetch the opponent Player; exit if they aren't found
   opponent = next((player for player in lobby['players'] if player != this_player), None)
   if opponent is None:
@@ -275,20 +320,14 @@ async def result(
     else:
       winner = opponent
     LobbyManager.report_match_result(winner, draw=(result=="Draw"))
-
   except ValueError as e:
     debug_print(e.args)
     await itx.response.send_message(
-      "ERROR: you're already in a lobby.",
+      f"ERROR: {e.args}",
       ephemeral=True
     )
     return
-  alert = "\U0001f6a8"
-  await itx.response.send_message(
-    f"{alert} <@{discord_account_ID}> just opened a ranked lobby {alert} _don't forget to ping the role to notify people_\n\n"
-      + this_player.get_summary(),
-    ephemeral=False
-  )
+
 
 
 ##############
@@ -320,7 +359,6 @@ async def format_message(
     raw_match = f'<{prefix}{digits}>'
     Type = {'@': 'user', '@&': 'role', '#': 'channel'}[prefix]
     match Type:
-      # TODO: resolve all cases
       case 'role':
         pretty_fragment = '@[a role]'
       case 'user':
