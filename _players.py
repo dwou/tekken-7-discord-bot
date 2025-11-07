@@ -3,18 +3,17 @@ import re
 import json
 import time
 import asyncio # to autoclose lobbies
+from copy import copy
 from basic_functions import *
 from LobbyManager import *
 
-# in case it has to be adjusted; functionality incomplete
-DEFAULT_ELO = 1000.0
+DEFAULT_ELO = 1000.0 # only used for new Players
 
 
 class PlayerManager():
   filename: str = None
   players: dict[str, Player] = dict()
   ID_map: dict[str, str] = dict() # curr -> prev
-  default_elo: float = None
 
   @classmethod
   def initialize(cls, filename='players.json'):
@@ -24,7 +23,6 @@ class PlayerManager():
   @classmethod
   def _load_data(cls, filename=None) -> None:
     """ Load players,ID_map from a file, or create a new file and vars.
-        Adjust important elo based on DEFAULT_ELO.
         Assume all input data is valid. """
     # Load the file if it exists
     if filename is None:
@@ -33,18 +31,12 @@ class PlayerManager():
     file_path = os.path.join(this_dir, filename)
     if not os.path.isfile(file_path):
       debug_print("No input file found.")
-      cls.default_elo = DEFAULT_ELO
-      # use default (empty) values for the other variables
+      # use default (empty) values for the variables
       return
     with open(file_path, "r") as f:
       debug_print('Loading data...')
       json_data = json.load(f)
       debug_print(f"Loaded data: {json_data}")
-
-    # Unpack the loaded data
-    cls.default_elo = json_data['default_elo']
-    elo_offset = 0 if DEFAULT_ELO == cls.default_elo \
-                 else DEFAULT_ELO - cls.default_elo
 
     # Unpack the players
     for p in json_data['players']:
@@ -57,9 +49,8 @@ class PlayerManager():
         region = r['region']
         platform = r['platform']
         del r['region'], r['platform']
-        r['elo'] += elo_offset
         records[(region, platform)] = r # TODO: make sure it copies
-      del p['records'] # use the created record, not the loaded one
+      del p['records'] # use the created `records`, not the loaded one
       cls.players[ID] = Player(**p, records=records)
 
     # Unpack the ID_map
@@ -69,8 +60,6 @@ class PlayerManager():
       orig_ID = im['orig_ID']
       debug_print(f'{ref_ID} -> {orig_ID}')
       cls.ID_map[ref_ID] = orig_ID
-
-    cls.default_elo = DEFAULT_ELO # after adjusting loaded values
 
   @classmethod
   def debug_print_players(cls) -> None:
@@ -85,7 +74,7 @@ class PlayerManager():
     checked_IDs = set()
     while ID in cls.ID_map:
       if ID in checked_IDs:
-        raise "get_player circular pointer error"
+        raise RuntimeError("get_player circular pointer error")
       checked_IDs.add(ID)
       ID = cls.ID_map[ID]
     if ID not in cls.players:
@@ -101,7 +90,7 @@ class PlayerManager():
     data = {
       "timestamp": [epoch_time, readable_time],
       "ID_map": cls.ID_map,
-      "default_elo": cls.default_elo,
+      "default_elo": DEFAULT_ELO,
       "players": [player._serialize() for player in cls.players.values()],
     }
     return data
@@ -128,12 +117,8 @@ class PlayerManager():
 
     # Save data to file, if there is data
     data = cls._serialize()
-    #debug_print("Dumping:", data)
-    if data: # unnecessary check?
-      with open(file_path, 'w') as f:
-        json.dump(data, f, indent=2)
-    else:
-      debug_print("There isn't enough data to write.")
+    with open(file_path, 'w') as f:
+      json.dump(data, f, indent=2)
 
   @classmethod
   def remap_ID(cls, curr_ID: str, prev_ID: str) -> None:
@@ -141,16 +126,27 @@ class PlayerManager():
         Should be restricted to admin-only. """
     cls.ID_map[curr_ID] = prev_ID
 
+  @classmethod
+  async def autosave(cls, period: float, backup: bool) -> None:
+    # Assume autosaving is enabled if this method is called
+    start_time = time.time()
+    while True:
+      await asyncio.sleep(period)
+      cls.save_to_file(backup=backup)
+
 
 class Player():
   # Values saved = banned: bool, ID: str, records: dict
   # self.records: map[tuple,dict] =
   #   ('NA','PC'): ("matches_total":int, "elo":float), ...
-  def __init__(self, ID, records=dict(), banned=False, display_name=""):
+  def __init__(self, ID, banned=False, display_name="", records: dict()=None):
     self.ID = ID
-    self.records = records
     self.banned = banned
     self.display_name = display_name
+    if records:
+      self.records = records
+    else:
+      self.records = dict()
 
   def get_record(self, region, platform) -> dict:
     """ Fetch and return record. Create one if it doesn't exist. """
@@ -171,7 +167,7 @@ class Player():
       # skip empty records
       if value['matches_total'] == 0:
         continue
-      this_record = value
+      this_record = copy(value)
       this_record["region"] = region
       this_record["platform"] = platform
       serialized_records.append(this_record)
