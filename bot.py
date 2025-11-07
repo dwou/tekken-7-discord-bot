@@ -1,4 +1,3 @@
-
 # Use this invite link (it displays permissions before you accept):
 #  "https://discord.com/oauth2/authorize?client_id=1429136363151950008&permissions=2048&integration_type=0&scope=bot+applications.commands
 # Scopes: applications.commands; bot
@@ -9,21 +8,21 @@
 #   Manage Roles (to ping elo ranges)
 
 # Implemented:
-#  Near-full Discord integration (idk how to deploy/update)
 #  Complete data saving(+backup) and loading system
 #  (semi-Automatic) Discord user ranked account creation
 #
 # Not (yet) implemented:
-#   Automatic backups
-#   A working lobby and Elo system
-#   A customized ping system based on region/platform/Elo
+#   Automatic backups (would be easy)
+#   A customized ping system based on region/platform/Elo (not useful for now)
 #   API rate limiter (but shouldn't be a problem)
 
-# TODO: remove backup hot loading - too complicated
-# TODO: "/lobby [close|kick|list|query]"
-# TODO: rewrite error messages to be in 2nd person
+# TODO: test EVERYTHING
+# TODO: figure out how to deploy/update
+# TODO: add autosave
+# TODO: "/lobby [kick|list|query]"
 # TODO: test permissions
 # TODO: consider using /match instead of /ranked, and give the option of unranked
+# TODO: add match logging (easy) and "undo" (less easy)
 
 from os import getenv
 import re
@@ -33,13 +32,12 @@ from functools import cache
 import discord
 from discord.ext import commands
 from discord import app_commands
+#from discord.ui import Button, View
 from dotenv import load_dotenv
 
-#from helper_functions import *
 from _players import *
 from LobbyManager import *
 from basic_functions import *
-
 
 
 # NOTES: Types & naming conventions, Functions, Data
@@ -64,18 +62,6 @@ discord.member.Member
 "ctx" (discord.ext.)commands.context.Context  # it's like a Member
   .send                    # send a message; different from channel.send()?
 '''
-
-
-def get_player(user: discord.member.Member) -> Player:
-  """ Use this to interface with PlayerManager players, as it can update
-      the Player's display name """
-  # TODO: add a wrapper to cache
-  user_ID = str(user.id)
-  player: Player = PlayerManager._get_player(user_ID)
-  # Resolve and save display name if it's not defined
-  if not player.display_name:
-    player.display_name = user.global_name
-  return player
 
 
 ###############
@@ -165,11 +151,11 @@ async def save(
 @bot.tree.command(name='playerdata', description='Prints player data')
 async def playerdata(
     itx: discord.Interaction,
-    user_at: str,
+    at_user: str,
   ) -> None:
-  debug_print(user_at)
+  debug_print(at_user)
   response = ""
-  if match := re.match(r'<@(\d+)>', user_at):
+  if match := re.match(r'<@(\d+)>', at_user):
     ID = match.group(1)
     try:
       mention_user = await bot.fetch_user(ID)
@@ -179,7 +165,7 @@ async def playerdata(
       player = get_player(mention_user)
       response = player.get_summary()
   else:
-    response = "Invalid syntax: " + user_at
+    response = "Invalid syntax: " + at_user
   await itx.response.send_message(response, ephemeral=True)
 
 
@@ -188,6 +174,7 @@ async def help(
     itx: discord.Interaction,
     command: Literal['/ranked', '/playerdata', '/save', '!ping'],
   ) -> None:
+  # TODO: update
   match command:
     case '/ranked':
       to_print = "Open a 1v1 ranked lobby given region and platform."\
@@ -225,18 +212,12 @@ async def ranked(
       ephemeral=True
     )
     return
-  alert = "\U0001f6a8"
   if ping_users == "Ping users":
     role_name = f"{region}-T7-{platform}"
     role = discord.utils.get(itx.guild.roles, name=role_name)
-    #debug_print(role)
-    #debug_print(role.id)
-    #debug_print(role.name)
-
     role_str = f"<@&{role.id}> "
   else:
     role_str = ''
-
 
   # TODO: which looks better?
   header = f"{role_str}:speaking_head::mega: <@{discord_account.id}> just opened a ranked lobby!\n\n"
@@ -247,19 +228,37 @@ async def ranked(
       + this_player.get_summary(),
     ephemeral=False
   )
+  await itx.followup.send("_(Don't forget to /invite people)_", ephemeral=True)
+
+
+@bot.tree.command(name='invite', description='Opens a ranked session')
+async def invite(
+    itx: discord.Interaction,
+    at_user: discord.User,
+  ) -> None:
+  try:
+    host = itx.user
+    invitee = at_user#await resolve_at_user(at_user)
+    host_player = get_player(host)
+    invitee_player = get_player(invitee)
+    LobbyManager.invite_to_lobby(host_player, invitee_player)
+    text = f"<@{host.id}> invited <@{invitee.id}> - _use /join to join their lobby_"
+    await itx.response.send_message(text)
+  except Exception as e:
+    await itx.response.send_message(f"ERROR: {e.args}")
 
 
 @bot.tree.command(name='join', description='Join a ranked lobby')
 async def join(
     itx: discord.Interaction,
-    at_user: str,
+    host_user: discord.User,
   ) -> None:
   """ The caller tries to join the lobby of `at_user` """
   joiner_player = get_player(itx.user)
   # Try parsing the host ID and resolving the host account
   try:
-    host_account_ID = re.match(r"<@(\d+)>", at_user).group(1)
-    host_user = await bot.fetch_user(host_account_ID)
+    #host_account_ID = re.match(r"<@(\d+)>", at_user).group(1)
+    #host_user = await bot.fetch_user(host_account_ID)
     host_player = get_player(host_user)
   except Exception as e:
     debug_print(e.args)
@@ -268,7 +267,6 @@ async def join(
     return
   # Try finding and joining the lobby
   try:
-    lobby = LobbyManager.find_lobby(host_player)
     LobbyManager.join_lobby(host_player, joiner_player)
   except Exception as e:
     await itx.response.send_message(f"ERROR: {e.args}", ephemeral=True)
@@ -299,35 +297,26 @@ async def leave(
 async def result(
     itx: discord.Interaction,
     result: Literal['I won', 'I lost', 'Draw'],
-    platform: Literal['Steam', 'PS'], # use "Steam", as "PS" ~= "PC" visually
   ) -> None:
   """ A player reports the result of their match. """
-  if platform == 'Steam':
-    platform = 'PC'
   discord_account = itx.user
   this_player = get_player(discord_account)
-  lobby = LobbyManager.find_lobby(this_player)
-  # Fetch the opponent Player; exit if they aren't found
-  opponent = next((player for player in lobby['players'] if player != this_player), None)
-  if opponent is None:
-    text = "You're not in a lobby with anyone else."
-    itx.response.send_message(text, ephemeral=True)
-    return
-
   try:
+    # Fetch the player's lobby and the opponent Player; exit if they aren't found
+    lobby = LobbyManager.find_lobby(this_player)
+    opponent = next((player for player in lobby['players'] if player != this_player), None)
+    if opponent is None:
+      await itx.response.send_message(f"You're in an empty lobby.", ephemeral=True)
+      return
+    # Determine the winner and report the result
     if result == "I won":
       winner = this_player
     else:
       winner = opponent
     LobbyManager.report_match_result(winner, draw=(result=="Draw"))
-  except ValueError as e:
-    debug_print(e.args)
-    await itx.response.send_message(
-      f"ERROR: {e.args}",
-      ephemeral=True
-    )
+  except Exception as e:
+    await itx.response.send_message(f"ERROR: {e.args}", ephemeral=True)
     return
-
 
 
 ##############
@@ -344,6 +333,26 @@ async def ping(ctx: discord.ext.commands.context.Context) -> None:
 ###################
 # Other functions #
 ###################
+
+
+def get_player(user: discord.member.Member) -> Player:
+  """ Use this to interface with PlayerManager players, as it can update
+      the Player's display name """
+  user_ID = str(user.id)
+  player: Player = PlayerManager._get_player(user_ID)
+  # Resolve and save display name if it's not defined
+  if not player.display_name:
+    player.display_name = user.global_name
+  return player
+
+async def resolve_at_user(at_user: str) -> discord.User:
+  """ Convert at_user (="<@user_ID>") to a User. """
+  if match := re.match(r'<@(\d+)>', at_user):
+    ID = match.group(1)
+    user = await bot.fetch_user(ID)
+  else:
+    raise ValueError(f"Invalid syntax: `{at_user}` (did you use \"@user\" ?)")
+  return user
 
 
 async def format_message(
@@ -401,12 +410,15 @@ async def handle_autoreply(msg: discord.message.Message) -> bool:
   """ apply all the functions that automatically reply to a message.
       Return True if there is any match """
   text: str = msg.content
-  author: discord.member.Member = msg.author.mention
   beggar_pattern = r'(?=(.{0,40}tourn.{0,30})|(help|final|last)).{0,30}achiev'
   if re.search(beggar_pattern, text):
-    # TODO: check if it's their first 3 messages
-    debug_print('!!! Beggar Detected !!!')
-    await msg.channel.send(f"You probably won't find anyone to help with getting the tournament achievement here {msg.author.mention}")
+    # Skip users with a ranked record, unless they have 0 total matches recorded
+    player = get_player(msg.author)
+    print(player.records)
+    if not player.records\
+        or not any(pair[matches_total] for pair in player.records):
+      debug_print('!!! Beggar Detected !!!')
+      await msg.channel.send(f"You probably won't find anyone to help with getting the tournament achievement here {msg.author.mention}")
   else: # No matches
     return False
   return True
