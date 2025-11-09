@@ -12,7 +12,7 @@ class LobbyManager():
   #   "region":_, "platform":_,
   #   "start_time":_, "last_interaction":_,
   #   "players": set[Player],
-  #   "records": dict[player, dict[W/L/D -> int]]
+  #   "records": dict[player, dict[W/L/matches_total -> int]]
   #   "invited_players": set[Player]
 
   @classmethod
@@ -58,9 +58,9 @@ class LobbyManager():
           "last_interaction": now,
           "players": {player,},
           "records": { # keep a temporary match result record for each player
-            player: {'W': 0, 'L': 0, 'D': 0},
+            player: {'matches_total': 0, 'W': 0, 'L': 0, 'D': 0},
           },
-          "invited_players": set(),
+          "invited_players": {player,},
         }
         cls.lobbies[lobby_ID] = lobby
         debug_print(f'Created lobby #{lobby_ID}')
@@ -72,7 +72,6 @@ class LobbyManager():
   def update_lobby(cls, lobby: dict) -> None:
     """ Refresh a lobby's last_interaction time. """
     now = time.time()
-    debug_print(f"Lobby #{lobby['ID']} updating last_interaction to {now=}")
     lobby['last_interaction'] = now
 
   @classmethod
@@ -107,7 +106,7 @@ class LobbyManager():
     if joiner in lobby['players']:
       raise ValueError("You're already in this lobby.")
     # Check if player is in another lobby
-    for lobby2 in cls.lobbies.items():
+    for lobby2 in cls.lobbies.values():
       if joiner in lobby2['players'] and lobby2 != lobby:
         raise ValueError(f"You're already in another lobby (use \"/leave\").")
     # Check if lobby is full
@@ -118,7 +117,7 @@ class LobbyManager():
       raise PermissionError(f"You haven't been invited to this lobby (the host has to /invite you).")
     # Add the player and update the lobby
     lobby['players'].add(joiner)
-    lobby['records'][joiner] = {'W': 0, 'L': 0, 'D': 0}
+    lobby['records'][joiner] = {'matches_total': 0, 'W': 0, 'L': 0, 'D': 0}
     cls.update_lobby(lobby)
 
   @classmethod
@@ -131,14 +130,19 @@ class LobbyManager():
     # Do not manually close an empty lobby - let close automatically
 
   @classmethod
-  def report_match_result(cls, winner: Player, draw: bool = False) -> None:
+  def report_match_result(cls, winner: Player, draw: bool = False) -> str:
     """ Update the W/L/D of both players in the lobby and update their Elos.
+        Return a formatted string representing the match results.
         `winner` can be either player in a draw. """
     lobby = cls.find_lobby(winner)
-    # Let Player p1 be the winner, and p2 the loser
+    region = lobby['region']
+    platform = lobby['platform']
+    # Let Player p1 be the winner, and p2 the loser.
+    # Update the lobby results.
     p1,p2 = None,None
     if not draw:
       for player,record in lobby['records'].items():
+        record['matches_total'] += 1
         if player == winner:
           record['W'] += 1
           p1 = player
@@ -147,14 +151,56 @@ class LobbyManager():
           p2 = player
     else:
       for player,record in lobby['records'].items():
+        record['matches_total'] += 1
         record['D'] += 1
         if p1 is None:
           p1 = player
-        else:
+        elif p2 is None:
           p2 = player
-    # Update the Elos
-    p1_elo = p1.get_elo(region, platform)
-    p2_elo = p2.get_elo(region, platform)
-    result = cls.elo_function(p1_elo, p2_elo)
-    p1[(region, platform)] += result['p1_gain']
-    p2[(region, platform)] += result['p2_gain']
+    # Fetch current Elos
+    p1_old_elo = p1.get_elo(region, platform)
+    p2_old_elo = p2.get_elo(region, platform)
+    # Make sure p1 has the lower elo if there's a draw (for displaying elo change)
+    if draw:
+      if p1_old_elo > p2_old_elo:
+        p1,p2 = p2,p1
+        p1_old_elo = p1.get_elo(region, platform)
+        p2_old_elo = p2.get_elo(region, platform)
+
+    # Calculate Elos and update both players
+    result = cls.elo_function(p1_old_elo, p2_old_elo, p1_wins=(0.5 if draw else 1))
+    p1_new_elo = p1_old_elo + result['p1_gain']
+    p2_new_elo = p2_old_elo + result['p2_gain']
+    p1.records[(region, platform)]['elo'] = p1_new_elo
+    p2.records[(region, platform)]['elo'] = p2_new_elo
+    p1.records[(region, platform)]['matches_total'] += 1
+    p2.records[(region, platform)]['matches_total'] += 1
+
+    # Log the result
+    cls.update_match_log(region, platform, p1, p2, draw=draw)
+
+    # Format the return the results string
+    p1_matches_total = lobby['records'][p1]['matches_total']
+    result_text = \
+      f"[{'D' if draw else 'W'}] {p1.display_name} :green_square: {int(p1_old_elo)} **(+{round(result['p1_gain'])})** ➜ __{int(p1_new_elo)}__"\
+      f"\n[{'D' if draw else 'L'}] {p2.display_name} :red_square: {int(p2_old_elo)} **({round(result['p2_gain'])})** ➜ __{int(p2_new_elo)}__"
+    return result_text
+
+  @classmethod
+  def update_match_log(cls,
+      region: str,
+      platform: str,
+      winner: Player,
+      loser: Player,
+      draw: bool = False,
+      undo: bool = False,
+    ) -> str:
+    """ Create a timestamped log entry in 'match_log.csv'. """
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(this_dir, "match_log.csv")
+    with open(file_path, 'a+') as f:
+      f.write( # timestamp,region,platform,winner_ID,loser_ID,{draw "True", "False", "undo"}
+        ','.join([
+          time.strftime("%s"), region, platform, winner.ID, loser.ID, 'undo' if undo else str(draw)
+        ]) + '\n'
+      )
