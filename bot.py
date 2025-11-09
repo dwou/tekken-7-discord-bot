@@ -30,8 +30,8 @@ from LobbyManager import *
 from basic_functions import *
 
 AUTOSAVE = True
-AUTOSAVE_BACKUPS = False # whether to back up previous data while autosaving
-AUTOSAVE_PERIOD = 120 #1 * 60 # (seconds) autosave periodically
+AUTOSAVE_BACKUPS = True # whether to back up previous data while autosaving
+AUTOSAVE_PERIOD = 3*60 # seconds between each autosave
 report_str = "Report bugs to /DWouu." # string to append to certain messages
 
 # NOTES: Types & naming conventions, Functions, Data
@@ -178,6 +178,9 @@ async def help(
 /result {I won|I lost|Draw|Undo}
         Report the result of a match (must be in a lobby with the other player).
         Note: "Undo" doesn't take effect until after the bot is restarted.
+
+/list_lobbies
+        List the open lobbies.
 
 /playerdata <user>
         Display the ranked data of a user.
@@ -335,6 +338,14 @@ async def ban_ranked(
   )
 
 
+@bot.tree.command(name='list_lobbies', description='List the lobbies')
+async def list_lobbies(itx: discord.Interaction) -> None:
+  text = LobbyManager.list_lobbies()
+  if text:
+    await itx.response.send_message(text, ephemeral=True)
+  else:
+    await itx.response.send_message("No lobbies.", ephemeral=True)
+
 ##############
 # ! commands #
 ##############
@@ -426,8 +437,8 @@ async def format_message(
 
 
 async def handle_autoreply(msg: discord.message.Message) -> bool:
-  """ Apply all the functions that automatically reply to a message.
-      Return True if there is any match. """
+  """ Apply all automatic reploes to a message.
+      Return True if there is any response. """
   text: str = msg.content
   beggar_pattern = r'(?=(.{0,40}tourn.{0,30})|(help|final|last)).{0,30}achiev'
   if re.search(beggar_pattern, text):
