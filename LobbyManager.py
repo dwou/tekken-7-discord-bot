@@ -12,7 +12,7 @@ class LobbyManager():
   #   "region":_, "platform":_,
   #   "start_time":_, "last_interaction":_,
   #   "players": set[Player],
-  #   "records": dict[player, dict[W/L/matches_total -> int]]
+  #   "records": dict[player, dict[W/L/D/matches_total -> int]]
   #   "invited_players": set[Player]
 
   @classmethod
