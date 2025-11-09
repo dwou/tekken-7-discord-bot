@@ -1,6 +1,6 @@
 
 def debug_print(*args, **kwargs):
-  """ print to console with flush=True """
+  """ Print to console with flush=True. """
   sep = kwargs.get('sep', ' ')
   end = kwargs.get('end', '\n')
   print(*args, sep=sep, end=end, flush=True)
@@ -11,7 +11,7 @@ def create_elo_function(
     diff: float = 400,  # "A player with +`diff` Elo..."
     xtimes: float = 10, # "... is `xtimes` times more likely to win"
   ):
-  """ Creates and returns a personalized Elo calculation function """
+  """ Create and return a personalized Elo calculation function. """
   def elo_function(p1, p2: float, p1_wins: float) -> dict[str, float]:
     # p1_wins: 0 = loss, 1 = win, 0.5 = Draw
     p1_expected: float = 1 / (1 + xtimes ** ((p2 - p1) / diff))
