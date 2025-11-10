@@ -1,6 +1,3 @@
-# Use this invite link (it displays permissions before you accept):
-#  "https://discord.com/oauth2/authorize?client_id=1429136363151950008&permissions=2048&integration_type=0&scope=bot+applications.commands
-
 # Implemented:
 #   Seemingly complete lobby and Elo system
 #   Complete data saving(+backup +autosaving) and loading system
@@ -345,6 +342,7 @@ async def list_lobbies(itx: discord.Interaction) -> None:
     await itx.response.send_message(text, ephemeral=True)
   else:
     await itx.response.send_message("No lobbies.", ephemeral=True)
+
 
 ##############
 # ! commands #
