@@ -27,7 +27,7 @@ from basic_functions import *
 
 AUTOSAVE = True
 AUTOSAVE_BACKUPS = True # whether to back up previous data while autosaving
-AUTOSAVE_PERIOD = 3*60 # seconds between each autosave
+AUTOSAVE_PERIOD = 10*60 # seconds between each autosave
 report_str = "Report bugs to /DWouu." # string to append to certain messages
 
 # NOTES: Types & naming conventions, Functions, Data
@@ -456,10 +456,10 @@ async def format_message(
     "%g": msg.author.global_name,
     "%d": msg.author.display_name,
     "%c": msg.channel.name,
-    "%r": msg.content, # unformatted (raw) content
-    "%f": pretty_text,# if content else msg.content, # formatted (given) content
-    "%T": title, # full title "bot"|"admin"|"user"
-    "%t": title[0], # first letter of `title`
+    "%r": msg.content,             # unformatted (raw) content
+    "%f": pretty_text,             # formatted (given) content
+    "%T": title,                   # full title "bot"|"admin"|"user"
+    "%t": title[0],                # first letter of `title`
   }
 
   # Apply the format; substitute in-place
@@ -481,7 +481,6 @@ async def handle_autoreply(msg: discord.message.Message) -> bool:
     print(player.records)
     if not player.records\
         or not any(pair[matches_total] for pair in player.records):
-      debug_print('!!! Beggar Detected !!!')
       await msg.channel.send(f"You probably won't find anyone to help with getting the tournament achievement here {msg.author.mention}")
   else: # No matches
     return False
@@ -489,7 +488,7 @@ async def handle_autoreply(msg: discord.message.Message) -> bool:
 
 
 @async_cache
-async def bot_fetch_user(user_ID: int) -> discord.User: # supposed to be int? try using str
+async def bot_fetch_user(user_ID: int) -> discord.User:
   """ Fetch a user and cache the result. """
   print("Fetching user:", user_ID)
   user = await bot.fetch_user(user_ID)
