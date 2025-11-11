@@ -188,8 +188,8 @@ async def help(
         [admin-only] Manually save the PlayerManager data.
 
 !ping
-        A simple ping-ping test to check if the bot is online.```
-"""
+        A simple ping-ping test to check if the bot is online.```"""\
+    + f"**{report_str}**"
   await itx.response.send_message(text, ephemeral=True)
 
 
