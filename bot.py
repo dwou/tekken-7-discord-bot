@@ -7,6 +7,8 @@
 #   A customized ping system based on region/platform/Elo (not useful for now)
 #   API rate limiter (but shouldn't be a problem)
 
+# Note: "admin" here means that people have the "ban_members" permission
+
 # TODO: test on Windows
 # TODO: process match log to re-compute Elo upon startup (including using "undo")
 # TODO: figure out how to deploy/update
@@ -28,7 +30,7 @@ from basic_functions import *
 AUTOSAVE = True
 AUTOSAVE_BACKUPS = True # whether to back up previous data while autosaving
 AUTOSAVE_PERIOD = 10*60 # seconds between each autosave
-report_str = "Report bugs to /DWouu." # string to append to certain messages
+report_str = "Report bugs to DWouu." # string to append to certain messages
 
 # NOTES: Types & naming conventions, Functions, Data
 '''
@@ -131,7 +133,7 @@ async def on_interaction(itx: discord.Interaction):
 ##################
 
 
-@app_commands.default_permissions(administrator=True)
+@app_commands.default_permissions(ban_members=True)
 @bot.tree.command(name='save', description='Saves player data')
 async def save(
     itx: discord.Interaction,
@@ -324,6 +326,7 @@ async def result(
     return
 
 
+@app_commands.default_permissions(ban_members=True)
 @bot.tree.command(name='ban_ranked', description='Ban a player from the ranked bot')
 async def ban_ranked(
     itx: discord.Interaction,
@@ -357,8 +360,8 @@ async def leaderboard(
     platform = 'PC'
   try:
     players = [player for player in PlayerManager.players.values()
-              if (region,platform) in player.records
-              and not player.banned]
+               if (region,platform) in player.records
+               and not player.banned]
     if players:
       sort_by_elo = lambda player: player.records[(region,platform)]['elo']
       players.sort(key=sort_by_elo, reverse=True)
@@ -409,16 +412,6 @@ def get_player(user: discord.member.Member) -> Player:
   return player
 
 
-async def resolve_at_user(at_user: str) -> discord.User:
-  """ Convert at_user (="<@user_ID>") to a User. """
-  if match := re.match(r'<@(\d+)>', at_user):
-    ID = match.group(1)
-    user = await bot_fetch_user(ID)
-  else:
-    raise ValueError(f"Invalid syntax: `{at_user}` (did you use \"@user\" ?)")
-  return user
-
-
 async def format_message(
     msg: discord.message.Message, # doesn't work with Interactions :(
     Format: str = "[%T %d]: %f", # see `format_map`
@@ -449,7 +442,8 @@ async def format_message(
 
   # Prepare formatting the message
   is_bot: bool = msg.author.bot
-  is_admin: bool = msg.author.guild_permissions.administrator
+  is_admin: bool = msg.author.guild_permissions.ban_members
+
   title = 'bot' if is_bot else ('admin' if is_admin else 'user')
   format_map = {
     "%n": msg.author.name,
@@ -478,7 +472,6 @@ async def handle_autoreply(msg: discord.message.Message) -> bool:
   if re.search(beggar_pattern, text):
     # Skip users with a ranked record, unless they have 0 total matches recorded
     player = get_player(msg.author)
-    print(player.records)
     if not player.records\
         or not any(pair[matches_total] for pair in player.records):
       await msg.channel.send(f"You probably won't find anyone to help with getting the tournament achievement here {msg.author.mention}")
