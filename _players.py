@@ -5,7 +5,6 @@ import time
 import asyncio # to autoclose lobbies
 from copy import copy
 from basic_functions import *
-#from LobbyManager import *
 
 DEFAULT_ELO = 1000.0 # only used for new Players
 
@@ -22,7 +21,7 @@ class PlayerManager():
 
   @classmethod
   def _load_data(cls) -> None:
-    """ Load players,ID_map from a file, or create a new file and vars.
+    """ Load players,ID_map from a file, if it exists.
         Assume all input data is valid. """
     # Load the file if it exists
     this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -80,7 +79,7 @@ class PlayerManager():
 
   @classmethod
   def _serialize(cls) -> Dict:
-    """ Create serialized representation of this object, for json """
+    """ Create serialized representation of this object, for json. """
     epoch_time = int(time.strftime("%s"))
     readable_time = time.strftime("%Y-%m-%d at %T %Z")
     data = {
@@ -95,22 +94,36 @@ class PlayerManager():
   def save_to_file(cls, backup=False) -> None:
     this_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(this_dir, cls.filename)
+    unix_time = time.strftime("%s")
+    old_basename = cls.filename[:-5] # strip ".json"
+    new_backup_name = os.path.join(this_dir, f'{old_basename}-{unix_time}.json')
+    data = cls._serialize()
+    def save(msg: str = "Saving..."):
+      """ Save `data` to `file_path`. """
+      debug_print(msg)
+      with open(file_path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    # Don't check `backup` or whether the data has changed, if `filename` not present
+    if not os.path.isfile(file_path):
+      save("Saving without backing up...")
+      return
+
+    # If new data == old data then do nothing
+    with open(file_path, 'r') as f:
+      old_data = json.load(f)
+      if data['players'] == old_data['players']\
+          and data['ID_map'] == old_data['ID_map']:
+        debug_print("Not saving; nothing has changed.")
+        return
 
     # Back up (rename instead of overwrite) the old data if applicable
     if backup:
-      # Rename the current <filename>.json to <filename>-<timestamp>.json
-      old_basename = cls.filename[:-5] # strip ".json"
-      unix_time = time.strftime("%s")
-      backup_name = os.path.join(this_dir, f'{old_basename}-{unix_time}.json')
-      if os.path.isfile(file_path):
-        os.rename(file_path, backup_name)
-      else:
-        debug_print("There's nothing to back up.")
+      os.rename(file_path, new_backup_name)
 
-    # Save data to file
-    data = cls._serialize()
-    with open(file_path, 'w') as f:
-      json.dump(data, f, indent=2)
+    # Finally, do a generic save
+    save()
+
 
   @classmethod
   def remap_ID(cls, curr_ID: str, prev_ID: str) -> None:
@@ -192,4 +205,3 @@ class Player():
       output += "and they're BANNED\n"
     output = output.strip()
     return output
-
