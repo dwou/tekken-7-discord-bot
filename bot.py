@@ -9,9 +9,8 @@
 
 # Note: "admin" here means that people have the "ban_members" permission
 
-# TODO: test on Windows
 # TODO: process match log to re-compute Elo upon startup (including using "undo")
-# TODO: figure out how to deploy/update
+# TODO: figure out how to update
 
 from os import getenv
 import re
@@ -139,12 +138,12 @@ async def save(
     itx: discord.Interaction,
     backup: bool,
   ) -> None:
+  debug_print('Manually saving PlayerManager...')
   PlayerManager.save_to_file(backup=backup)
-  debug_print('Saved PlayerManager.')
   await itx.response.send_message(f'Saved.', ephemeral=True)
 
 
-@bot.tree.command(name='playerdata', description='Prints player data')
+@bot.tree.command(name='playerdata', description='Print player data')
 async def playerdata(
     itx: discord.Interaction,
     user: discord.User,
@@ -154,7 +153,7 @@ async def playerdata(
   await itx.response.send_message(response, ephemeral=True)
 
 
-@bot.tree.command(name='help', description="Shows a description of a given command")
+@bot.tree.command(name='help', description="Show a description of a given command")
 async def help(
     itx: discord.Interaction,
   ) -> None:
@@ -195,7 +194,7 @@ async def help(
   await itx.response.send_message(text, ephemeral=True)
 
 
-@bot.tree.command(name='ranked', description='Opens a ranked session')
+@bot.tree.command(name='ranked', description='Open a ranked session')
 async def ranked(
     itx: discord.Interaction,
     region: Literal['NA', 'EU', 'ASIA', 'SA', 'MEA'],
@@ -236,7 +235,7 @@ async def ranked(
   await itx.followup.send("Don't forget to `/invite` people.", ephemeral=True)
 
 
-@bot.tree.command(name='invite', description='Invites another user to a ranked session')
+@bot.tree.command(name='invite', description='Invite another user to a ranked session')
 async def invite(
     itx: discord.Interaction,
     invited_user: discord.User,
@@ -346,7 +345,7 @@ async def list_lobbies(itx: discord.Interaction) -> None:
   if text:
     await itx.response.send_message(text, ephemeral=True)
   else:
-    await itx.response.send_message("No lobbies.", ephemeral=True)
+    await itx.response.send_message("There are no lobbies open.", ephemeral=True)
 
 
 @bot.tree.command(name='leaderboard', description='Display a leaderboard for the region/platform')
@@ -465,7 +464,7 @@ async def format_message(
 
 
 async def handle_autoreply(msg: discord.message.Message) -> bool:
-  """ Apply all automatic reploes to a message.
+  """ Apply all automatic replies to a message.
       Return True if there is any response. """
   text: str = msg.content
   beggar_pattern = r'(?=(.{0,40}tourn.{0,30})|(help|final|last)).{0,30}achiev'
