@@ -13,6 +13,7 @@ class PlayerManager():
   filename: str = None
   players: dict[str, Player] = dict()
   ID_map: dict[str, str] = dict() # curr -> prev; no Discord interface yet
+  should_save: bool = False # dirty bit to track changes
 
   @classmethod
   def initialize(cls, filename: str = 'data.json'):
@@ -73,6 +74,7 @@ class PlayerManager():
       checked_IDs.add(ID)
       ID = cls.ID_map[ID]
     if ID not in cls.players:
+      cls.should_save = True
       debug_print(f"Making a new player with {ID=}")
       cls.players[ID] = Player(ID)
     return cls.players[ID]
@@ -80,8 +82,8 @@ class PlayerManager():
   @classmethod
   def _serialize(cls) -> Dict:
     """ Create serialized representation of this object, for json. """
-    epoch_time = int(time.strftime("%s"))
-    readable_time = time.strftime("%Y-%m-%d at %T %Z")
+    epoch_time = int(time.time())
+    readable_time = time.strftime("%Y-%m-%d at %H %M")
     data = {
       "timestamp": [epoch_time, readable_time],
       "ID_map": cls.ID_map,
@@ -94,41 +96,37 @@ class PlayerManager():
   def save_to_file(cls, backup=False) -> None:
     this_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(this_dir, cls.filename)
-    unix_time = time.strftime("%s")
+    unix_time = int(time.time())
     old_basename = cls.filename[:-5] # strip ".json"
     new_backup_name = os.path.join(this_dir, f'{old_basename}-{unix_time}.json')
     data = cls._serialize()
     def save(msg: str = "Saving..."):
-      """ Save `data` to `file_path`. """
-      debug_print(msg)
-      with open(file_path, 'w') as f:
-        json.dump(data, f, indent=2)
-
-    # Don't check `backup` or whether the data has changed, if `filename` not present
+      """ Save `data` to `file_path`. Check and update `cls.should_save`. """
+      if cls.should_save:
+        cls.should_save = False
+        debug_print(msg)
+        with open(file_path, 'w') as f:
+          json.dump(data, f, indent=2)
+      else:
+        debug_print("Not saving: nothing has changed.")
+        
+    # Don't check `backup` if `file_path` not present
     if not os.path.isfile(file_path):
       save("Saving without backing up...")
       return
 
-    # If new data == old data then do nothing
-    with open(file_path, 'r') as f:
-      old_data = json.load(f)
-      if data['players'] == old_data['players']\
-          and data['ID_map'] == old_data['ID_map']:
-        debug_print("Not saving; nothing has changed.")
-        return
-
     # Back up (rename instead of overwrite) the old data if applicable
-    if backup:
+    if backup and cls.should_save:
       os.rename(file_path, new_backup_name)
 
     # Finally, do a generic save
     save()
 
-
   @classmethod
   def remap_ID(cls, curr_ID: str, prev_ID: str) -> None:
     """ Remap one Discord ID to another (in case they lose their account etc).
         Should be restricted to admin-only. """
+    cls.should_save = True
     cls.ID_map[curr_ID] = prev_ID
 
   @classmethod
@@ -161,7 +159,11 @@ class Player():
     """ Fetch and return record. Create one if it doesn't exist. """
     couple = (region, platform)
     if couple not in self.records:
-      self.records[couple] = {"matches_total": 0, "elo": DEFAULT_ELO}
+      PlayerManager.should_save = True
+      self.records[couple] = {
+        "matches_total": 0,
+        "elo": DEFAULT_ELO
+      }
     return self.records[couple]
 
   def get_elo(self, region, platform) -> float:
@@ -187,7 +189,6 @@ class Player():
       "records": serialized_records,
       "banned": self.banned,
     }
-    #debug_print("Serialized player data:", data)
     return data
 
   def get_summary(self) -> None:
