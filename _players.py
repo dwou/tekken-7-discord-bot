@@ -14,7 +14,7 @@ class PlayerManager():
   """ a singleton class to manage Players, including saving and loading. """
   filename: str = None
   players: dict[str, Player] = {}
-  ID_map: dict[str, str] = {} # curr -> prev; no Discord interface yet
+  id_map: dict[str, str] = {} # curr -> prev; no Discord interface yet
   should_save: bool = False # dirty bit to track changes
 
   @classmethod
@@ -25,7 +25,7 @@ class PlayerManager():
 
   @classmethod
   def _load_data(cls) -> None:
-    """ Load players,ID_map from a file, if it exists.
+    """ Load players,id_map from a file, if it exists.
         Assume all input data is valid. """
     # Load the file if it exists
     this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,13 +52,13 @@ class PlayerManager():
       del p['records'] # use the created `records`, not the loaded one
       cls.players[ID] = Player(**p, records=records)
 
-    # Unpack the ID_map
+    # Unpack the id_map
     for im in json_data['id_map']:
       debug_print('Reading (IDs):', im)
       ref_id = im['ref_id']
       orig_id = im['orig_id']
       debug_print(f'{ref_id} -> {orig_id}')
-      cls.ID_map[ref_id] = orig_id
+      cls.id_map[ref_id] = orig_id
 
   @classmethod
   def debug_print_players(cls) -> None:
@@ -71,11 +71,11 @@ class PlayerManager():
     """ Fetch a player by their ID; Create them if they don't exist;
         Resolve their ID if it's mapped. Error on a circular pointer chain. """
     checked_IDs = set()
-    while ID in cls.ID_map:
+    while ID in cls.id_map:
       if ID in checked_IDs:
         raise RuntimeError("get_player circular pointer error")
       checked_IDs.add(ID)
-      ID = cls.ID_map[ID]
+      ID = cls.id_map[ID]
     if ID not in cls.players:
       cls.should_save = True
       debug_print(f"Making a new player with {ID=}")
@@ -86,10 +86,10 @@ class PlayerManager():
   def _serialize(cls) -> dict:
     """ Create serialized representation of this object, for json. """
     epoch_time = int(time.time())
-    readable_time = time.strftime("%Y-%m-%d at %H %M")
+    readable_time = time.strftime("%Y-%m-%d at %H:%M:%S %Z")
     data = {
       "timestamp": [epoch_time, readable_time],
-      "ID_map": cls.ID_map,
+      "id_map": cls.id_map,
       "default_elo": DEFAULT_ELO,
       "players": [player.serialize() for player in cls.players.values()],
     }
@@ -131,7 +131,7 @@ class PlayerManager():
     """ Remap one Discord ID to another (in case they lose their account etc).
         Should be restricted to admin-only. """
     cls.should_save = True
-    cls.ID_map[curr_id] = prev_id
+    cls.id_map[curr_id] = prev_id
 
   @classmethod
   async def autosave(cls, period: float, backup: bool) -> None:
