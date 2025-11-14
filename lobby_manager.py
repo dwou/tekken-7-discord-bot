@@ -1,14 +1,18 @@
+""" Module defining the LobbyManager class. """
+
 import time
 import asyncio
-from _players import *
-from basic_functions import *
+import os
+from _players import Player
+from basic_functions import debug_print, create_elo_function
 
 
 class LobbyManager():
+  """ A singleton class to manage lobbies. """
   elo_function = create_elo_function(K=20, diff=100, xtimes=2)
   keepalive_duration = 30 * 60 # seconds; initial time to keep a lobby alive for
   refresh_duration = 3 * 60 # seconds; time to keep a lobby alive without activity
-  lobbies: dict[int, dict] = dict() # lobby ID -> {}
+  lobbies: dict[int, dict] = {} # lobby ID -> {}
   # `lobbies`: key identifier(1,2,3,...) -> Dict:
   #   "ID": int,
   #   "region":_, "platform":_,
@@ -49,11 +53,11 @@ class LobbyManager():
     # Make sure they have a record with this region+platform
     _ = player.get_record(region, platform)
     # Find a free lobby ID and create a lobby using it
-    for lobby_ID in range(1,1000):
-      if lobby_ID not in cls.lobbies:
+    for lobby_id in range(1,1000):
+      if lobby_id not in cls.lobbies:
         now = time.time()
         lobby = {
-          "ID": lobby_ID,
+          "ID": lobby_id,
           "region": region,
           "platform": platform,
           "start_time": now,
@@ -64,8 +68,8 @@ class LobbyManager():
           },
           "invited_players": {player,},
         }
-        cls.lobbies[lobby_ID] = lobby
-        debug_print(f'Created lobby #{lobby_ID}')
+        cls.lobbies[lobby_id] = lobby
+        debug_print(f'Created lobby #{lobby_id}')
         # Spawn a task to automatically close the lobby
         asyncio.create_task(cls.__lobby_autocloser(lobby))
         return lobby
@@ -110,13 +114,13 @@ class LobbyManager():
     # Check if player is in another lobby
     for lobby2 in cls.lobbies.values():
       if joiner in lobby2['players'] and lobby2 != lobby:
-        raise ValueError(f"You're already in another lobby (use \"/leave\").")
+        raise ValueError("You're already in another lobby (use \"/leave\").")
     # Check if lobby is full
     if len(lobby['players']) > 1:
-      raise ValueError(f"Host lobby is full (wait or make a new one).")
+      raise ValueError("Host lobby is full (wait or make a new one).")
     # Check if player is invited
     if joiner not in lobby['invited_players']:
-      raise PermissionError(f"You haven't been invited to this lobby (the host has to /invite you).")
+      raise PermissionError("You haven't been invited to this lobby (the host has to /invite you).")
     # Add the player and update the lobby
     lobby['players'].add(joiner)
     lobby['records'][joiner] = {'matches_total': 0, 'W': 0, 'L': 0, 'D': 0}
@@ -182,7 +186,6 @@ class LobbyManager():
     cls.update_match_log(region, platform, p1, p2, draw=draw)
 
     # Format the return the results string
-    p1_matches_total = lobby['records'][p1]['matches_total']
     result_text = \
       f"[{'D' if draw else 'W'}] {p1.display_name} :green_square: {int(p1_old_elo)} **(+{round(result['p1_gain'])})** ➜ __{int(p1_new_elo)}__"\
       f"\n[{'D' if draw else 'L'}] {p2.display_name} :red_square: {int(p2_old_elo)} **({round(result['p2_gain'])})** ➜ __{int(p2_new_elo)}__"
@@ -200,7 +203,7 @@ class LobbyManager():
     """ Create a timestamped log entry in 'match_log.csv'. """
     this_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(this_dir, "match_log.csv")
-    with open(file_path, 'a+') as f:
+    with open(file_path, 'a+', encoding='u8') as f:
       f.write( # timestamp,region,platform,winner_ID,loser_ID,{draw "True", "False", "undo"}
         ','.join([
           str(int(time.time())), region, platform, winner.ID, loser.ID, 'undo' if undo else str(draw)
