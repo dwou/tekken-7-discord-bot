@@ -1,16 +1,13 @@
-# Implemented:
-#   Seemingly complete lobby and Elo system
-#   Complete data saving(+backup +autosaving) and loading system
-#   (semi-Automatic) Discord user ranked account creation
-#
+""" Module providing primary interface for the bot. """
+
 # Not (yet) implemented:
 #   A customized ping system based on region/platform/Elo (not useful for now)
 #   API rate limiter (but shouldn't be a problem)
 
-# Note: "admin" here means that people have the "ban_members" permission
-
 # TODO: process match log to re-compute Elo upon startup (including using "undo")
 # TODO: figure out how to update
+
+# Note: "admin" here means that people have the "ban_members" permission
 
 from os import getenv
 import re
@@ -22,14 +19,14 @@ from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
 
-from _players import *
-from LobbyManager import *
-from basic_functions import *
+from _players import PlayerManager, Player
+from lobby_manager import LobbyManager
+from basic_functions import debug_print, async_cache
 
 AUTOSAVE = True
 AUTOSAVE_BACKUPS = True # whether to back up previous data while autosaving
 AUTOSAVE_PERIOD = 10*60 # seconds between each autosave
-report_str = "Report bugs to DWouu." # string to append to certain messages
+REPORT_STR = "Report bugs to DWouu." # string to append to certain messages
 
 # NOTES: Types & naming conventions, Functions, Data
 '''
@@ -65,8 +62,9 @@ intents = discord.Intents.default()
 intents.message_content = True  # see (incoming messages'?) content
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+
 async def main():
-  global bot
+  """ Initialize PlayerManager, start autosave, and start the bot. """
   PlayerManager.initialize()
   if AUTOSAVE:
     asyncio.create_task(
@@ -83,6 +81,7 @@ async def main():
 
 @bot.event
 async def on_ready() -> None:
+  """ When the bot starts up, sync the bot's commands. """
   await bot.tree.sync()
   debug_print(f"{bot.user} is online!")
 
@@ -95,7 +94,7 @@ async def on_message(msg: discord.message.Message) -> None:
     return
 
   # Print message
-  formatted_msg: str = await format_message(msg, Format="%t [%d]: %f")
+  formatted_msg: str = await format_message(msg, str_format="%t [%d]: %f")
   debug_print(formatted_msg)
 
   # Ignore bots' messages
@@ -104,7 +103,7 @@ async def on_message(msg: discord.message.Message) -> None:
     return
 
   # Handle automatic replies
-  responded: bool = await handle_autoreply(msg)
+  _ = await handle_autoreply(msg)
 
   # Execute ! commands
   await bot.process_commands(msg)
@@ -138,9 +137,10 @@ async def save(
     itx: discord.Interaction,
     backup: bool,
   ) -> None:
+  """ Manually save player data. """
   debug_print('Manually saving PlayerManager...')
   PlayerManager.save_to_file(backup=backup)
-  await itx.response.send_message(f'Saved.', ephemeral=True)
+  await itx.response.send_message('Saved.', ephemeral=True)
 
 
 @bot.tree.command(name='playerdata', description='Print player data')
@@ -148,6 +148,7 @@ async def playerdata(
     itx: discord.Interaction,
     user: discord.User,
   ) -> None:
+  """ Display data about a player. """
   player = get_player(user)
   response = player.get_summary()
   await itx.response.send_message(response, ephemeral=True)
@@ -157,6 +158,7 @@ async def playerdata(
 async def help(
     itx: discord.Interaction,
   ) -> None:
+  """ Print the `help` text. """
   text = """-# Note: "lobby" here refers to the object that this Discord bot keeps track of internally.
 ```
 /ranked <region> <platform> <ping_users={True|False}>
@@ -190,7 +192,7 @@ async def help(
 
 !ping
         A simple ping-ping test to check if the bot is online.```"""\
-    + f"**{report_str}**"
+    + f"**{REPORT_STR}**"
   await itx.response.send_message(text, ephemeral=True)
 
 
@@ -201,13 +203,15 @@ async def ranked(
     platform: Literal['Steam', 'PS'], # use "Steam", as "PS" ~= "PC" visually
     ping_users: Literal['Ping users', "Don't ping users"],
   ) -> None:
+  """ Open a ranked lobby given region and platform,
+      and optionally ping users that use the role. """
   if platform == 'Steam':
     platform = 'PC'
   discord_account = itx.user
   this_player = get_player(discord_account)
   # Try making a new lobby for this player and proceed if a new lobby is made
   try:
-    lobby = await LobbyManager.new_lobby(this_player, region, platform)
+    _ = await LobbyManager.new_lobby(this_player, region, platform)
   except ValueError as e:
     debug_print(e.args)
     await itx.response.send_message(
@@ -222,14 +226,14 @@ async def ranked(
   else:
     role_str = ''
 
-  # TODO: which looks better?
+  # TODO: decide which one looks better
   header = f"{role_str}:speaking_head::mega: <@{discord_account.id}> just opened a ranked lobby!\n\n"
   #header = f":rotating_light: <@{discord_account_ID}> just opened a ranked lobby :rotating_light:\n\n"
   debug_print(header)
   await itx.response.send_message(
       header
       + this_player.get_summary()
-      + f"\n_-# {report_str}_",
+      + f"\n_-# {REPORT_STR}_",
     ephemeral=False
   )
   await itx.followup.send("Don't forget to `/invite` people.", ephemeral=True)
@@ -240,6 +244,7 @@ async def invite(
     itx: discord.Interaction,
     invited_user: discord.User,
   ) -> None:
+  """ The caller invites another user to their lobby. """
   try:
     host = itx.user
     host_player = get_player(host)
@@ -257,7 +262,7 @@ async def join(
     itx: discord.Interaction,
     host_user: discord.User,
   ) -> None:
-  """ The caller tries to join the lobby of `at_user` """
+  """ The caller tries to join another user's lobby. """
   joiner_player = get_player(itx.user)
   host_player = get_player(host_user)
   # Try finding and joining the lobby
@@ -292,11 +297,11 @@ async def leave(
 @bot.tree.command(name='result', description='Report the result of a match')
 async def result(
     itx: discord.Interaction,
-    result: Literal['I won', 'I lost', 'Draw', 'Undo'],
+    match_result: Literal['I won', 'I lost', 'Draw', 'Undo'],
   ) -> None:
   """ A player reports the result of their match.
-      If result == "Undo" then only update the match log, otherwise try to
-      update each player's Elo. """
+      If `match_result` == "Undo" then only update the match log,
+      otherwise update each player's Elo. """
   discord_account = itx.user
   this_player = get_player(discord_account)
   try:
@@ -304,21 +309,21 @@ async def result(
     lobby = LobbyManager.find_lobby(this_player)
     opponent = next((player for player in lobby['players'] if player != this_player), None)
     if opponent is None:
-      await itx.response.send_message(f"You're in an empty lobby.", ephemeral=True)
+      await itx.response.send_message("You're in an empty lobby.", ephemeral=True)
       return
     # Determine the winner and report the result
-    if result == "I won":
+    if match_result == "I won":
       winner = this_player
       loser = opponent
     else:
       winner = opponent
       loser = this_player
     # Handle Undo
-    if result == 'Undo':
+    if match_result == 'Undo':
       LobbyManager.update_match_log(lobby['region'], lobby['platform'], winner, loser, undo=True)
       result_text = "Noted undo (bot has to be reloaded for it to take effect)."
     else:
-      result_text = LobbyManager.report_match_result(winner, draw=(result=="Draw"))
+      result_text = LobbyManager.report_match_result(winner, draw=(match_result=="Draw"))
     await itx.response.send_message(result_text, ephemeral=False)
   except Exception as e:
     await itx.response.send_message(f"ERROR: {e.args}", ephemeral=True)
@@ -341,6 +346,7 @@ async def ban_ranked(
 
 @bot.tree.command(name='list_lobbies', description='List the lobbies')
 async def list_lobbies(itx: discord.Interaction) -> None:
+  """ Display a list of the current opened lobbies. """
   text = LobbyManager.list_lobbies()
   if text:
     await itx.response.send_message(text, ephemeral=True)
@@ -362,7 +368,8 @@ async def leaderboard(
                if (region,platform) in player.records
                and not player.banned]
     if players:
-      sort_by_elo = lambda player: player.records[(region,platform)]['elo']
+      def sort_by_elo(player: Player):
+        return player.records[(region,platform)]['elo']
       players.sort(key=sort_by_elo, reverse=True)
       lines = []
       for player in players:
@@ -390,6 +397,7 @@ async def leaderboard(
 # ping pong test
 @bot.command(name='ping')
 async def ping(ctx: discord.ext.commands.context.Context) -> None:
+  """ A simple ping-pong test to see if the bot is online. """
   await ctx.send("Pong!")
 
 
@@ -402,8 +410,8 @@ def get_player(user: discord.member.Member) -> Player:
   """ Resolve a Player from their Discord user.
       Use this to interface with PlayerManager players, as it can update
       the Player's display name. """
-  user_ID = str(user.id)
-  player: Player = PlayerManager._get_player(user_ID)
+  user_id = str(user.id)
+  player: Player = PlayerManager.get_player(user_id)
   # Resolve and save display name
   if not player.display_name:
     name = user.global_name if user.global_name else user.display_name
@@ -413,17 +421,16 @@ def get_player(user: discord.member.Member) -> Player:
 
 async def format_message(
     msg: discord.message.Message, # doesn't work with Interactions :(
-    Format: str = "[%T %d]: %f", # see `format_map`
+    str_format: str = "[%T %d]: %f", # see `format_map`
     to_resolve: bool = True,
   ) -> None:
   """ Format the message and resolve mentioned users/roles/etc. """
   # Iterate through each "<...>"  in the message, resolve, and replace
-  raw_text: str = msg.content
-  pretty_text: str = raw_text
-  for prefix,digits in re.findall(r'<(@|@&|#)(\d{1,20})>', raw_text):
+  pretty_text: str = msg.content # start raw and make it pretty
+  for prefix,digits in re.findall(r'<(@|@&|#)(\d{1,20})>', msg.content):
     raw_match = f'<{prefix}{digits}>'
-    Type = {'@': 'user', '@&': 'role', '#': 'channel'}[prefix]
-    match Type:
+    caregory_name = {'@': 'user', '@&': 'role', '#': 'channel'}[prefix]
+    match caregory_name:
       case 'role':
         pretty_fragment = '@[a role]'
       case 'user':
@@ -439,6 +446,16 @@ async def format_message(
         pretty_fragment = "[???]"
     pretty_text = pretty_text.replace(raw_match, pretty_fragment)
 
+  output = apply_format(msg, str_format=str_format, given_str=pretty_text)
+  return output
+
+
+def apply_format(
+    msg: discord.message.Message,
+    str_format: str = "[%T %d]: %f", # see `format_map`
+    given_str: str = "",
+  ) -> None:
+  """ Apply a given format to a message. """
   # Prepare formatting the message
   is_bot: bool = msg.author.bot
   is_admin: bool = msg.author.guild_permissions.ban_members
@@ -450,13 +467,13 @@ async def format_message(
     "%d": msg.author.display_name,
     "%c": msg.channel.name,
     "%r": msg.content,             # unformatted (raw) content
-    "%f": pretty_text,             # formatted (given) content
+    "%f": given_str,               # formatted (given) content
     "%T": title,                   # full title "bot"|"admin"|"user"
     "%t": title[0],                # first letter of `title`
   }
 
   # Apply the format; substitute in-place
-  output = Format
+  output = str_format
   for key,value in format_map.items():
     output = re.sub(f"({key})", str(value), output)
 
@@ -469,10 +486,10 @@ async def handle_autoreply(msg: discord.message.Message) -> bool:
   text: str = msg.content
   beggar_pattern = r'(?=(.{0,40}tourn.{0,30})|(help|final|last)).{0,30}achiev'
   if re.search(beggar_pattern, text):
-    # Skip users with a ranked record, unless they have 0 total matches recorded
+    # Skip users who have played at least one match
     player = get_player(msg.author)
-    if not player.records\
-        or not any(pair[matches_total] for pair in player.records):
+    if not any(record["matches_total"] > 0
+               for record in player.records.values()):
       await msg.channel.send(f"You probably won't find anyone to help with getting the tournament achievement here {msg.author.mention}")
   else: # No matches
     return False
@@ -480,10 +497,10 @@ async def handle_autoreply(msg: discord.message.Message) -> bool:
 
 
 @async_cache
-async def bot_fetch_user(user_ID: int) -> discord.User:
+async def bot_fetch_user(user_id: int) -> discord.User:
   """ Fetch a user and cache the result. """
-  print("Fetching user:", user_ID)
-  user = await bot.fetch_user(user_ID)
+  print("Fetching user:", user_id)
+  user = await bot.fetch_user(user_id)
   return user
 
 
