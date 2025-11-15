@@ -27,27 +27,67 @@ AUTOSAVE = True
 AUTOSAVE_BACKUPS = True # whether to back up previous data while autosaving
 AUTOSAVE_PERIOD = 10*60 # seconds between each autosave
 REPORT_STR = "Report bugs to DWouu." # string to append to certain messages
+HELP_STRING = """-# Note: "lobby" here refers to the object that this Discord bot keeps track of internally.
+```
+/ranked <region> <platform> <ping_users={True|False}>
+        Open a ranked lobby and optionally ping users in the region/platform.
+        The lobby must be periodically updated using /result.
+
+/invite <user>
+        Allow a player to join your lobby.
+
+/join <user>
+        Join a lobby (you need to be invited first).
+
+/leave
+        Leave a lobby.
+
+/result {I won|I lost|Draw|Undo}
+        Report the result of a match (must be in a lobby with the other player).
+        Note: "Undo" has not been implemented yet but will be logged for later.
+
+--------------------------------------------------------------------------------
+
+/list_lobbies
+        List the open lobbies.
+
+/playerdata <user>
+        Display the ranked data of a user.
+
+/leaderboard <region> <platform>
+        Display the ranked leaderboard for a region/platform.
+
+!ping
+        A simple ping-ping test to check if the bot is online.
+
+/save <backup={True|False}>
+        [admin-only] Manually save the PlayerManager data.
+
+/ban_ranked <user>
+        [admin-only] Ban a user from using this bot.```"""\
+    + f"**{REPORT_STR}**"
+
 
 # NOTES: Types & naming conventions, Functions, Data
 '''
 "msg": discord.message.Message  # a Discord message
   .channel
-    .send()                # send a message
+    .send()                # send a message in the message's channel
   .content: str            # the message's content
   .author                  # the author, a Member
-discord.member.Member
+"user" discord.member.Member
   .guild_permissions
     .administrator: bool   # is an admin
   .mention: str?           # the username
   .bot: bool               # is a bot
-  .display_name
-  .global_name             # display_name but sometimes returns None)
+  .display_name            # the display name of the user
+  .global_name             # like `display_name` but sometimes returns None (?)
 "itx" discord.Interaction  # for slash commands (among other things?)
   .response
-    .send_message()
+    .send_message()        # Send a message in response to the itx
   .user: Member            # the message sender
   .channel
-"ctx" (discord.ext.)commands.context.Context  # it's like a Member
+"ctx" discord.ext.commands.context.Context  # it's like a Member
   .send                    # send a message; different from channel.send()?
 '''
 
@@ -93,8 +133,8 @@ async def on_message(msg: discord.message.Message) -> None:
   if not msg.guild:
     return
 
-  # Print message
-  formatted_msg: str = await format_message(msg, str_format="%t [%d]: %f")
+  # Print message, substituting only mentions for usernames
+  formatted_msg = await format_message(msg)
   debug_print(formatted_msg)
 
   # Ignore bots' messages
@@ -103,7 +143,7 @@ async def on_message(msg: discord.message.Message) -> None:
     return
 
   # Handle automatic replies
-  _ = await handle_autoreply(msg)
+  await handle_autoreply(msg)
 
   # Execute ! commands
   await bot.process_commands(msg)
@@ -154,46 +194,16 @@ async def playerdata(
   await itx.response.send_message(response, ephemeral=True)
 
 
-@bot.tree.command(name='help', description="Show a description of a given command")
-async def help(
-    itx: discord.Interaction,
-  ) -> None:
-  """ Print the `help` text. """
-  text = """-# Note: "lobby" here refers to the object that this Discord bot keeps track of internally.
-```
-/ranked <region> <platform> <ping_users={True|False}>
-        Open a ranked lobby and optionally ping users in the region/platform.
-        The lobby must be periodically updated using /result.
+@bot.tree.command(name='help', description="Show a description of each command")
+async def help(itx: discord.Interaction) -> None:
+  """ Print the `help` text; same as /bot_commands. """
+  await itx.response.send_message(HELP_STRING, ephemeral=True)
 
-/invite <user>
-        Allow a player to join your lobby.
 
-/join
-        Join a lobby (you need to be invited first).
-
-/leave
-        Leave a lobby.
-
-/result {I won|I lost|Draw|Undo}
-        Report the result of a match (must be in a lobby with the other player).
-        Note: "Undo" doesn't take effect until after the bot is restarted.
-
-/list_lobbies
-        List the open lobbies.
-
-/playerdata <user>
-        Display the ranked data of a user.
-
-/leaderboard <region> <platform>
-        Display the ranked leaderboard for a region/platform.
-
-/save <backup={True|False}>
-        [admin-only] Manually save the PlayerManager data.
-
-!ping
-        A simple ping-ping test to check if the bot is online.```"""\
-    + f"**{REPORT_STR}**"
-  await itx.response.send_message(text, ephemeral=True)
+@bot.tree.command(name='bot_commands', description="Show a description of each command")
+async def bot_commands(itx: discord.Interaction) -> None:
+  """ Print a description of each command; same as /help. """
+  await itx.response.send_message(HELP_STRING, ephemeral=True)
 
 
 @bot.tree.command(name='ranked', description='Open a ranked session')
@@ -209,7 +219,7 @@ async def ranked(
     platform = 'PC'
   discord_account = itx.user
   this_player = get_player(discord_account)
-  # Try making a new lobby for this player and proceed if a new lobby is made
+  # Try making a new lobby for this player and proceed if a new lobby is made.
   try:
     _ = await LobbyManager.new_lobby(this_player, region, platform)
   except ValueError as e:
@@ -226,14 +236,18 @@ async def ranked(
   else:
     role_str = ''
 
-  # TODO: decide which one looks better
-  header = f"{role_str}:speaking_head::mega: <@{discord_account.id}> just opened a ranked lobby!\n\n"
-  #header = f":rotating_light: <@{discord_account_ID}> just opened a ranked lobby :rotating_light:\n\n"
-  debug_print(header)
+  # If pinging users, make an elaborate message. Otherwise, make a simple one.
+  if ping_users:
+    header = f"{role_str}:speaking_head::mega: <@{discord_account.id}>"\
+      " just opened a ranked lobby and is looking for a set!\n\n"
+    text = header + this_player.get_summary()
+  else:
+    text = f"<@{discord_account.id}> opened a ranked lobby."
+
+  # Send the "created a lobby" message and a reminder to invite people.
   await itx.response.send_message(
-      header
-      + this_player.get_summary()
-      + f"\n_-# {REPORT_STR}_",
+    text
+    + f"\n_-# {REPORT_STR}_",
     ephemeral=False
   )
   await itx.followup.send("Don't forget to `/invite` people.", ephemeral=True)
@@ -279,9 +293,7 @@ async def join(
 
 
 @bot.tree.command(name='leave', description="Leave the lobby you're in")
-async def leave(
-    itx: discord.Interaction,
-  ) -> None:
+async def leave(itx: discord.Interaction) -> None:
   """ The caller tries to leave their current lobby """
   player = get_player(itx.user)
   # Try finding and leaving the lobby
@@ -406,6 +418,21 @@ async def ping(ctx: discord.ext.commands.context.Context) -> None:
 ###################
 
 
+async def format_message(msg: discord.message.Message) -> str:
+  """ Format a message, substituting only mentions for usernames. """
+  content = msg.content
+  for match in re.finditer(r'(<@(\d+)>)', content):
+    user_id = match.group(2)
+    user = await bot_fetch_user(user_id)
+    content = re.sub(
+      match.group(1),           # Replace the <...>
+      '@' + user.display_name,  # with the user's fetched name
+      content
+    )
+  formatted_msg = f"[{msg.author.display_name}]: {content}"
+  return formatted_msg
+
+
 def get_player(user: discord.member.Member) -> Player:
   """ Resolve a Player from their Discord user.
       Use this to interface with PlayerManager players, as it can update
@@ -419,87 +446,24 @@ def get_player(user: discord.member.Member) -> Player:
   return player
 
 
-async def format_message(
-    msg: discord.message.Message, # doesn't work with Interactions :(
-    str_format: str = "[%T %d]: %f", # see `format_map`
-    to_resolve: bool = True,
-  ) -> None:
-  """ Format the message and resolve mentioned users/roles/etc. """
-  # Iterate through each "<...>"  in the message, resolve, and replace
-  pretty_text: str = msg.content # start raw and make it pretty
-  for prefix,digits in re.findall(r'<(@|@&|#)(\d{1,20})>', msg.content):
-    raw_match = f'<{prefix}{digits}>'
-    caregory_name = {'@': 'user', '@&': 'role', '#': 'channel'}[prefix]
-    match caregory_name:
-      case 'role':
-        pretty_fragment = '@[a role]'
-      case 'user':
-        if to_resolve:
-          mention_username = (await bot_fetch_user(digits)).display_name
-          pretty_fragment = f"@[{mention_username}]"
-        else:
-          pretty_fragment = '@[a user]'
-      case 'channel':
-        pretty_fragment = '#[a channel]'
-      case _:  # no match
-        debug_print(f"Unknown match: {raw_match}")
-        pretty_fragment = "[???]"
-    pretty_text = pretty_text.replace(raw_match, pretty_fragment)
-
-  output = apply_format(msg, str_format=str_format, given_str=pretty_text)
-  return output
-
-
-def apply_format(
-    msg: discord.message.Message,
-    str_format: str = "[%T %d]: %f", # see `format_map`
-    given_str: str = "",
-  ) -> None:
-  """ Apply a given format to a message. """
-  # Prepare formatting the message
-  is_bot: bool = msg.author.bot
-  is_admin: bool = msg.author.guild_permissions.ban_members
-
-  title = 'bot' if is_bot else ('admin' if is_admin else 'user')
-  format_map = {
-    "%n": msg.author.name,
-    "%g": msg.author.global_name,
-    "%d": msg.author.display_name,
-    "%c": msg.channel.name,
-    "%r": msg.content,             # unformatted (raw) content
-    "%f": given_str,               # formatted (given) content
-    "%T": title,                   # full title "bot"|"admin"|"user"
-    "%t": title[0],                # first letter of `title`
-  }
-
-  # Apply the format; substitute in-place
-  output = str_format
-  for key,value in format_map.items():
-    output = re.sub(f"({key})", str(value), output)
-
-  return output
-
-
-async def handle_autoreply(msg: discord.message.Message) -> bool:
-  """ Apply all automatic replies to a message.
-      Return True if there is any response. """
+async def handle_autoreply(msg: discord.message.Message) -> None:
+  """ Apply all automatic replies to a message. """
   text: str = msg.content
-  beggar_pattern = r'(?=(.{0,40}tourn.{0,30})|(help|final|last)).{0,30}achiev'
-  if re.search(beggar_pattern, text):
+  # Beggars
+  if re.search(r'(final|last).{0,20}achiev', text)\
+      or re.search(r'help.{0,40}achiev', text)\
+      or ('tourn' in text and 'achiev' in text):
     # Skip users who have played at least one match
     player = get_player(msg.author)
     if not any(record["matches_total"] > 0
                for record in player.records.values()):
       await msg.channel.send(f"You probably won't find anyone to help with getting the tournament achievement here {msg.author.mention}")
-  else: # No matches
-    return False
-  return True
 
 
 @async_cache
 async def bot_fetch_user(user_id: int) -> discord.User:
   """ Fetch a user and cache the result. """
-  print("Fetching user:", user_id)
+  debug_print("Fetching user:", user_id)
   user = await bot.fetch_user(user_id)
   return user
 
