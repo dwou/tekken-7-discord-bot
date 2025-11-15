@@ -424,10 +424,9 @@ async def format_message(msg: discord.message.Message) -> str:
   for match in re.finditer(r'(<@(\d+)>)', content):
     user_id = match.group(2)
     user = await bot_fetch_user(user_id)
-    content = re.sub(
-      match.group(1),           # Replace the <...>
-      '@' + user.display_name,  # with the user's fetched name
-      content
+    content = content.replace(
+      match.group(1),
+      '@' + user.display_name
     )
   formatted_msg = f"[{msg.author.display_name}]: {content}"
   return formatted_msg
